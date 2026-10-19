@@ -1,6 +1,12 @@
 const express = require('express');
 const { getPrisma, isValidId } = require('../config/db');
 const { protect } = require('../middleware/auth');
+const {
+  roundMoney,
+  toMinorUnits,
+  fromMinorUnits,
+  calculateInvoiceFinancials,
+} = require('../utils/formatters');
 
 const router = express.Router();
 
@@ -14,10 +20,6 @@ const PAYMENT_METHOD_MAP = {
   nagad: 'other',
   other: 'other',
 };
-
-function roundCurrency(value) {
-  return Math.round(Number(value) * 100) / 100;
-}
 
 router.get('/', async (req, res, next) => {
   try {
@@ -83,6 +85,7 @@ router.post('/', async (req, res, next) => {
       customerEmail,
       discount = 0,
       tax,
+      taxAmount,
       taxRate,
       paymentMethod = 'cash',
     } = req.body;
@@ -101,11 +104,17 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ message: 'Discount must be a non-negative number' });
     }
 
-    if (tax !== undefined && (!Number.isFinite(Number(tax)) || Number(tax) < 0)) {
-      return res.status(400).json({ message: 'Tax must be a non-negative number' });
+    const explicitTaxInput = taxAmount !== undefined ? taxAmount : tax;
+    if (
+      explicitTaxInput !== undefined &&
+      explicitTaxInput !== null &&
+      (!Number.isFinite(Number(explicitTaxInput)) || Number(explicitTaxInput) < 0)
+    ) {
+      return res.status(400).json({ message: 'Tax amount must be a non-negative number' });
     }
     if (
       taxRate !== undefined &&
+      taxRate !== null &&
       (!Number.isFinite(Number(taxRate)) || Number(taxRate) < 0 || Number(taxRate) > 100)
     ) {
       return res.status(400).json({ message: 'Tax rate must be between 0 and 100' });
@@ -170,51 +179,77 @@ router.post('/', async (req, res, next) => {
         });
       }
 
-      // Preserve original item order from request for line items
-      let subtotal = 0;
-      let totalCost = 0;
+      // Preserve original item order from request for line items using minor-unit integer math
+      let subtotalMinor = 0;
+      let totalCostMinor = 0;
       const saleItemsData = [];
 
       for (const [productId, qty] of mergedItemsMap.entries()) {
         const entry = deductedByProductId.get(productId);
         const p = entry.product;
-        const lineSubtotal = roundCurrency(p.price * qty);
-        const unitCost = p.cost !== undefined && p.cost !== null ? p.cost : roundCurrency(p.price * 0.75);
-        const lineCost = roundCurrency(unitCost * qty);
-        const lineProfit = roundCurrency(lineSubtotal - lineCost);
-        subtotal = roundCurrency(subtotal + lineSubtotal);
-        totalCost = roundCurrency(totalCost + lineCost);
+        const unitPriceMinor = toMinorUnits(p.price);
+        const unitCostMinor =
+          p.cost !== undefined && p.cost !== null
+            ? toMinorUnits(p.cost)
+            : Math.round(unitPriceMinor * 0.75);
+
+        const lineSubtotalMinor = unitPriceMinor * qty;
+        const lineCostMinor = unitCostMinor * qty;
+        const lineProfitMinor = lineSubtotalMinor - lineCostMinor;
+
+        subtotalMinor += lineSubtotalMinor;
+        totalCostMinor += lineCostMinor;
 
         saleItemsData.push({
           productId: p.id,
           name: p.name,
           category: p.category,
           quantity: qty,
-          price: p.price,
-          cost: unitCost,
-          subtotal: lineSubtotal,
-          profit: lineProfit,
+          price: fromMinorUnits(unitPriceMinor),
+          cost: fromMinorUnits(unitCostMinor),
+          subtotal: fromMinorUnits(lineSubtotalMinor),
+          profit: fromMinorUnits(lineProfitMinor),
         });
       }
 
-      if (parsedDiscount > subtotal) {
+      const subtotal = fromMinorUnits(subtotalMinor);
+      const totalCost = fromMinorUnits(totalCostMinor);
+
+      if (toMinorUnits(parsedDiscount) > subtotalMinor) {
         const discountErr = new Error('Discount cannot exceed order subtotal');
         discountErr.statusCode = 400;
         throw discountErr;
       }
 
-      const cleanDiscount = roundCurrency(parsedDiscount);
-      const netSubtotal = roundCurrency(Math.max(subtotal - cleanDiscount, 0));
-
-      let computedTax = 0;
-      if (tax !== undefined) {
-        computedTax = roundCurrency(Number(tax));
-      } else if (taxRate !== undefined) {
-        computedTax = roundCurrency(netSubtotal * (Number(taxRate) / 100));
+      // Resolve tax rate snapshot at time of sale (IMP-16):
+      // 1. Explicit taxRate from request body if provided
+      // 2. Otherwise, if explicit taxAmount was provided without taxRate, derive effective rate
+      // 3. Otherwise, snapshot current Business Settings taxRate (default 0)
+      let resolvedTaxRate = 0;
+      if (taxRate !== undefined && taxRate !== null) {
+        resolvedTaxRate = roundMoney(Number(taxRate));
+      } else if (explicitTaxInput !== undefined && explicitTaxInput !== null) {
+        const taxableBase = Math.max(0, subtotal - roundMoney(parsedDiscount));
+        resolvedTaxRate =
+          taxableBase > 0 ? roundMoney((Number(explicitTaxInput) / taxableBase) * 100) : 0;
+      } else {
+        const bizSetting = await tx.setting.findFirst({
+          where: { userId: req.user.id },
+        });
+        const fallbackSetting = bizSetting || (await tx.setting.findFirst());
+        resolvedTaxRate = roundMoney(Number(fallbackSetting?.taxRate || 0));
       }
 
-      const total = roundCurrency(netSubtotal + computedTax);
-      const profit = roundCurrency(netSubtotal - totalCost);
+      const financials = calculateInvoiceFinancials({
+        subtotal,
+        discount: parsedDiscount,
+        totalCost,
+        taxRate: resolvedTaxRate,
+        explicitTaxAmount:
+          explicitTaxInput !== undefined && explicitTaxInput !== null
+            ? Number(explicitTaxInput)
+            : undefined,
+      });
 
       // 2. Resolve or upsert customer inside the same transaction
       let resolvedCustomer = null;
@@ -241,7 +276,7 @@ router.post('/', async (req, res, next) => {
           where: { id: resolvedCustomer.id },
           data: {
             totalOrders: { increment: 1 },
-            totalSpent: { increment: total },
+            totalSpent: roundMoney((resolvedCustomer.totalSpent || 0) + financials.total),
           },
         });
         finalCustomerName = resolvedCustomer.name;
@@ -254,7 +289,7 @@ router.post('/', async (req, res, next) => {
             phone: finalCustomerPhone,
             email: finalCustomerEmail || null,
             totalOrders: 1,
-            totalSpent: total,
+            totalSpent: financials.total,
           },
         });
       }
@@ -278,7 +313,7 @@ router.post('/', async (req, res, next) => {
       `;
       const invoiceNumber = `INV-${Number(counterRows[0].seq)}`;
 
-      // 4. Create Sale + SaleItem records
+      // 4. Create Sale + SaleItem records with persisted taxRate and taxAmount snapshot (IMP-16)
       const createdSale = await tx.sale.create({
         data: {
           invoiceNumber,
@@ -286,11 +321,13 @@ router.post('/', async (req, res, next) => {
           customerName: finalCustomerName,
           customerPhone: finalCustomerPhone,
           customerEmail: finalCustomerEmail,
-          subtotal,
-          discount: cleanDiscount,
-          total,
-          totalCost,
-          profit,
+          subtotal: financials.subtotal,
+          discount: financials.discount,
+          taxRate: financials.taxRate,
+          taxAmount: financials.taxAmount,
+          total: financials.total,
+          totalCost: financials.totalCost,
+          profit: financials.profit,
           paymentMethod: normalizedPaymentMethod,
           soldById: req.user.id,
           items: {
@@ -317,7 +354,7 @@ router.post('/', async (req, res, next) => {
         });
       }
 
-      return { ...createdSale, tax: computedTax };
+      return createdSale;
     });
 
     res.status(201).json(saleResult);

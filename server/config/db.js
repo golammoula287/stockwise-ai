@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { roundMoney } = require('../utils/formatters');
 
 let prismaInstance = null;
 
@@ -83,6 +84,24 @@ function createPrismaClient(datasourceUrl) {
           needs: { id: true },
           compute(sale) {
             return sale.id;
+          },
+        },
+        tax: {
+          needs: { taxAmount: true },
+          compute(sale) {
+            return sale.taxAmount ?? null;
+          },
+        },
+        taxableAmount: {
+          needs: { subtotal: true, discount: true },
+          compute(sale) {
+            return roundMoney(Math.max(0, (Number(sale.subtotal) || 0) - (Number(sale.discount) || 0)));
+          },
+        },
+        isLegacyTax: {
+          needs: { taxRate: true, taxAmount: true },
+          compute(sale) {
+            return sale.taxRate === null || sale.taxRate === undefined || sale.taxAmount === null || sale.taxAmount === undefined;
           },
         },
       },

@@ -92,6 +92,8 @@ model Sale {
   customerEmail String        @default("")
   subtotal      Float
   discount      Float         @default(0)
+  taxRate       Float?
+  taxAmount     Float?
   total         Float
   totalCost     Float         @default(0)
   profit        Float         @default(0)
