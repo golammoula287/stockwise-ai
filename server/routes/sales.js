@@ -4,9 +4,18 @@ const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const Customer = require('../models/Customer');
 const StockLog = require('../models/StockLog');
+const Counter = require('../models/Counter');
 const { protect } = require('../middleware/auth');
 
 const router = express.Router();
+
+const ALLOWED_PAYMENT_METHODS = ['cash', 'card', 'bkash', 'other'];
+
+function createHttpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
 
 router.get('/', async (req, res, next) => {
   try {
@@ -60,160 +69,209 @@ router.get('/:id', async (req, res, next) => {
 });
 
 router.post('/', protect, async (req, res, next) => {
-  try {
-    const {
-      customer,
-      customerName,
-      customerPhone,
-      customerEmail,
-      items,
-      discount = 0,
-      paymentMethod = 'cash',
-    } = req.body;
+  const {
+    customer,
+    customerName,
+    customerPhone,
+    customerEmail,
+    items,
+    discount = 0,
+    paymentMethod = 'cash',
+  } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: 'At least one product item is required' });
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ message: 'At least one product item is required' });
+  }
+
+  if (!ALLOWED_PAYMENT_METHODS.includes(paymentMethod)) {
+    return res.status(400).json({ message: `Invalid payment method: ${paymentMethod}` });
+  }
+
+  const numDiscount = Number(discount);
+  if (discount !== undefined && (Number.isNaN(numDiscount) || !Number.isFinite(numDiscount) || numDiscount < 0)) {
+    return res.status(400).json({ message: 'Discount must be a non-negative number' });
+  }
+  const parsedDiscount = numDiscount || 0;
+
+  // Validate and merge duplicate product entries in the request
+  const mergedItemsMap = new Map();
+  for (const it of items) {
+    if (!it || !it.product || !mongoose.Types.ObjectId.isValid(it.product)) {
+      return res.status(400).json({ message: 'Valid product ID is required for each item' });
     }
-    const parsedDiscount = Math.max(Number(discount) || 0, 0);
+    const rawQty = typeof it.quantity === 'string' && it.quantity.trim() !== ''
+      ? Number(it.quantity)
+      : it.quantity;
+    if (typeof rawQty !== 'number' || !Number.isInteger(rawQty) || rawQty < 1) {
+      return res.status(400).json({ message: 'Item quantity must be a positive integer' });
+    }
+    const key = String(it.product);
+    mergedItemsMap.set(key, (mergedItemsMap.get(key) || 0) + rawQty);
+  }
 
-    // 1. Validate every item and check stock availability
-    let subtotal = 0;
-    let totalCost = 0;
-    const saleItems = [];
-    const productSnapshots = [];
+  const session = await mongoose.startSession();
+  let createdSaleId = null;
 
-    for (const it of items) {
-      if (!it.product || !mongoose.Types.ObjectId.isValid(it.product)) {
-        return res.status(400).json({ message: 'Valid product ID is required for each item' });
-      }
-      const qty = parseInt(it.quantity, 10);
-      if (!qty || qty < 1) {
-        return res.status(400).json({ message: 'Item quantity must be at least 1' });
-      }
-      const product = await Product.findById(it.product);
-      if (!product) {
-        return res.status(404).json({ message: `Product not found: ${it.product}` });
-      }
-      if (product.stock < qty) {
-        return res.status(400).json({
-          message: `Insufficient stock for ${product.name}: ${product.stock} available, ${qty} requested`,
+  try {
+    await session.withTransaction(async () => {
+      let subtotal = 0;
+      let totalCost = 0;
+      const saleItems = [];
+      const deducted = [];
+
+      // 1. Atomically verify and deduct stock per merged product inside the transaction
+      for (const [productId, qty] of mergedItemsMap.entries()) {
+        const beforeProduct = await Product.findOneAndUpdate(
+          { _id: productId, stock: { $gte: qty } },
+          { $inc: { stock: -qty } },
+          { new: false, session }
+        );
+
+        if (!beforeProduct) {
+          const existing = await Product.findById(productId).session(session);
+          if (!existing) {
+            throw createHttpError(404, `Product not found: ${productId}`);
+          }
+          throw createHttpError(
+            400,
+            `Insufficient stock for ${existing.name}: ${existing.stock} available, ${qty} requested`
+          );
+        }
+
+        const prevStock = beforeProduct.stock;
+        const newStock = prevStock - qty;
+        const lineSubtotal = beforeProduct.price * qty;
+        const unitCost = beforeProduct.cost || Math.round(beforeProduct.price * 0.75);
+        const lineCost = unitCost * qty;
+        const lineProfit = lineSubtotal - lineCost;
+
+        subtotal += lineSubtotal;
+        totalCost += lineCost;
+
+        saleItems.push({
+          product: beforeProduct._id,
+          name: beforeProduct.name,
+          category: beforeProduct.category,
+          price: beforeProduct.price,
+          cost: unitCost,
+          quantity: qty,
+          subtotal: lineSubtotal,
+          profit: lineProfit,
+        });
+
+        deducted.push({
+          id: beforeProduct._id,
+          name: beforeProduct.name,
+          category: beforeProduct.category,
+          qty,
+          prevStock,
+          newStock,
         });
       }
-      const lineSubtotal = product.price * qty;
-      const unitCost = product.cost || Math.round(product.price * 0.75);
-      const lineCost = unitCost * qty;
-      const lineProfit = lineSubtotal - lineCost;
 
-      subtotal += lineSubtotal;
-      totalCost += lineCost;
-
-      saleItems.push({
-        product: product._id,
-        name: product.name,
-        category: product.category,
-        price: product.price,
-        cost: unitCost,
-        quantity: qty,
-        subtotal: lineSubtotal,
-        profit: lineProfit,
-      });
-      productSnapshots.push({ product, qty });
-    }
-
-    const total = Math.max(subtotal - parsedDiscount, 0);
-    const profit = total - totalCost;
-
-    // 2. Atomically deduct stock for each item
-    const deducted = [];
-    for (const snap of productSnapshots) {
-      const prevStock = snap.product.stock;
-      const updated = await Product.findOneAndUpdate(
-        { _id: snap.product._id, stock: { $gte: snap.qty } },
-        { $inc: { stock: -snap.qty } },
-        { new: true }
-      );
-      if (!updated) {
-        // Rollback already deducted items
-        for (const d of deducted) {
-          await Product.findByIdAndUpdate(d.id, { $inc: { stock: d.qty } });
-        }
-        return res.status(400).json({ message: `Concurrent stock conflict for ${snap.product.name}` });
+      if (parsedDiscount > subtotal) {
+        throw createHttpError(400, 'Discount cannot exceed sale subtotal');
       }
-      deducted.push({ id: snap.product._id, qty: snap.qty, prevStock, newStock: updated.stock, product: updated });
-    }
 
-    // 3. Resolve or create customer if inline info provided
-    let resolvedCustomerId = customer && mongoose.Types.ObjectId.isValid(customer) ? customer : null;
-    let resolvedCustomerName = customerName || 'Walk-in Customer';
-    let resolvedPhone = customerPhone || '';
-    let resolvedEmail = customerEmail || '';
+      const total = subtotal - parsedDiscount;
+      const profit = total - totalCost;
 
-    if (resolvedCustomerId) {
-      const custDoc = await Customer.findByIdAndUpdate(
-        resolvedCustomerId,
-        { $inc: { totalSpent: total, totalOrders: 1 } },
-        { new: true }
-      );
-      if (custDoc) {
+      // 2. Update or create customer within the same transaction
+      let resolvedCustomerId = customer && mongoose.Types.ObjectId.isValid(customer) ? customer : null;
+      let resolvedCustomerName = customerName ? customerName.trim() : 'Walk-in Customer';
+      let resolvedPhone = customerPhone ? customerPhone.trim() : '';
+      let resolvedEmail = customerEmail ? customerEmail.trim().toLowerCase() : '';
+
+      if (resolvedCustomerId) {
+        const custDoc = await Customer.findByIdAndUpdate(
+          resolvedCustomerId,
+          { $inc: { totalSpent: total, totalOrders: 1 } },
+          { new: true, session }
+        );
+        if (!custDoc) {
+          throw createHttpError(404, 'Selected customer not found');
+        }
         resolvedCustomerName = custDoc.name;
         resolvedPhone = custDoc.phone || resolvedPhone;
         resolvedEmail = custDoc.email || resolvedEmail;
+      } else if (resolvedCustomerName && resolvedCustomerName !== 'Walk-in Customer' && resolvedPhone) {
+        let custDoc = await Customer.findOne({ phone: resolvedPhone }).session(session);
+        if (!custDoc) {
+          const [createdCust] = await Customer.create(
+            [{
+              name: resolvedCustomerName,
+              phone: resolvedPhone,
+              email: resolvedEmail || undefined,
+              totalSpent: total,
+              totalOrders: 1,
+            }],
+            { session }
+          );
+          custDoc = createdCust;
+        } else {
+          custDoc.totalSpent = (custDoc.totalSpent || 0) + total;
+          custDoc.totalOrders = (custDoc.totalOrders || 0) + 1;
+          await custDoc.save({ session });
+        }
+        resolvedCustomerId = custDoc._id;
+        resolvedCustomerName = custDoc.name;
       }
-    } else if (customerName && customerName.trim() && customerPhone && customerPhone.trim()) {
-      let custDoc = await Customer.findOne({ phone: customerPhone.trim() });
-      if (!custDoc) {
-        custDoc = await Customer.create({
-          name: customerName.trim(),
-          phone: customerPhone.trim(),
-          email: customerEmail ? customerEmail.trim().toLowerCase() : undefined,
-          totalSpent: total,
-          totalOrders: 1,
-        });
-      } else {
-        custDoc.totalSpent = (custDoc.totalSpent || 0) + total;
-        custDoc.totalOrders = (custDoc.totalOrders || 0) + 1;
-        await custDoc.save();
-      }
-      resolvedCustomerId = custDoc._id;
-      resolvedCustomerName = custDoc.name;
-    }
 
-    const saleCount = await Sale.countDocuments();
-    const invoiceNumber = `INV-${1001 + saleCount}`;
+      // 3. Atomically increment invoice sequence counter
+      const counter = await Counter.findByIdAndUpdate(
+        'invoiceNumber',
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true, session }
+      );
+      const invoiceNumber = `INV-${counter.seq}`;
 
-    const sale = await Sale.create({
-      invoiceNumber,
-      customer: resolvedCustomerId,
-      customerName: resolvedCustomerName,
-      customerPhone: resolvedPhone,
-      customerEmail: resolvedEmail,
-      items: saleItems,
-      subtotal,
-      discount: parsedDiscount,
-      total,
-      totalCost,
-      profit,
-      paymentMethod,
-      soldBy: req.user._id,
+      // 4. Create sale document inside the transaction
+      const [createdSale] = await Sale.create(
+        [{
+          invoiceNumber,
+          customer: resolvedCustomerId,
+          customerName: resolvedCustomerName,
+          customerPhone: resolvedPhone,
+          customerEmail: resolvedEmail,
+          items: saleItems,
+          subtotal,
+          discount: parsedDiscount,
+          total,
+          totalCost,
+          profit,
+          paymentMethod,
+          soldBy: req.user._id,
+        }],
+        { session }
+      );
+      createdSaleId = createdSale._id;
+
+      // 5. Record stock history entries inside the transaction
+      await StockLog.insertMany(
+        deducted.map(d => ({
+          product: d.id,
+          productName: d.name,
+          category: d.category,
+          type: 'sale',
+          change: -d.qty,
+          previousStock: d.prevStock,
+          newStock: d.newStock,
+          note: `Sale ${invoiceNumber} (${resolvedCustomerName})`,
+          performedBy: req.user._id,
+        })),
+        { session }
+      );
     });
 
-    // 4. Record stock history entries
-    await StockLog.insertMany(deducted.map(d => ({
-      product: d.id,
-      productName: d.product.name,
-      category: d.product.category,
-      type: 'sale',
-      change: -d.qty,
-      previousStock: d.prevStock,
-      newStock: d.newStock,
-      note: `Sale ${invoiceNumber} (${resolvedCustomerName})`,
-      performedBy: req.user._id,
-    })));
-
-    const populated = await sale.populate('customer', 'name phone email');
-    res.status(201).json(populated);
+    const populated = await Sale.findById(createdSaleId).populate('customer', 'name phone email');
+    return res.status(201).json(populated);
   } catch (err) {
-    next(err);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
+    return next(err);
+  } finally {
+    await session.endSession();
   }
 });
 
