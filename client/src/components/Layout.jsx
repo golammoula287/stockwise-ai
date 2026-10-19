@@ -42,7 +42,7 @@ export default function Layout({ children }) {
       <aside className="hidden md:flex w-[225px] bg-[#111827] text-white flex-col shrink-0 select-none">
         <div className="px-5 py-5 flex items-center gap-2.5 font-bold text-lg tracking-tight border-b border-white/10">
           <span className="bg-blue-600 w-7 h-7 rounded-lg grid place-items-center text-sm shadow">⬢</span>
-          <span>StockPro</span>
+          <span>StockWise AI</span>
         </div>
         <nav className="px-3 py-4 space-y-1.5 flex-1">
           {navItems.map(item => (
@@ -81,7 +81,7 @@ export default function Layout({ children }) {
             <div className="px-5 py-4 flex items-center justify-between border-b border-white/10">
               <div className="flex items-center gap-2 font-bold text-lg">
                 <span className="bg-blue-600 w-7 h-7 rounded-lg grid place-items-center text-sm">⬢</span>
-                <span>StockPro</span>
+                <span>StockWise AI</span>
               </div>
               <button onClick={() => setMobileOpen(false)} className="text-slate-400 hover:text-white text-lg">✕</button>
             </div>
@@ -126,7 +126,7 @@ export default function Layout({ children }) {
             </button>
             <div className="md:hidden font-bold flex items-center gap-2">
               <span className="bg-blue-600 text-white w-6 h-6 rounded grid place-items-center text-xs">⬢</span>
-              <span>StockPro</span>
+              <span>StockWise AI</span>
             </div>
           </div>
 

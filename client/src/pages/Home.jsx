@@ -12,7 +12,7 @@ export default function Home() {
         <nav className="max-w-[1200px] mx-auto flex items-center justify-between px-6 py-4">
           <Link to="/" className="flex items-center gap-2.5 font-extrabold text-xl text-slate-900">
             <span className="bg-blue-600 text-white w-8 h-8 rounded-lg grid place-items-center shadow-sm">⬢</span>
-            <span>StockPro</span>
+            <span>StockWise AI</span>
           </Link>
 
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-600">
@@ -97,9 +97,9 @@ export default function Home() {
               <div className="flex items-center justify-between border-b pb-2">
                 <div className="flex items-center gap-2 font-bold text-xs text-slate-800">
                   <span className="bg-blue-600 text-white w-5 h-5 rounded grid place-items-center text-[10px]">⬢</span>
-                  StockPro Dashboard
+                  StockWise AI Dashboard
                 </div>
-                <span className="text-[10px] text-slate-400">Live Preview</span>
+                <span className="text-[10px] text-slate-400">Preview</span>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div className="bg-emerald-50 p-2.5 rounded-lg">

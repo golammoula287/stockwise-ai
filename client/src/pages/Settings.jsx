@@ -7,11 +7,11 @@ export default function Settings() {
   const [tab, setTab] = useState('Profile');
   const [profile, setProfile] = useState({
     name: 'John Doe',
-    email: 'john@example.com',
+    email: 'admin@stockwise.com',
     phone: '01712345678',
   });
   const [business, setBusiness] = useState({
-    businessName: 'StockPro',
+    businessName: 'StockWise AI',
     currency: '৳',
     taxRate: 0,
     lowStockThresholdDefault: 5,
@@ -19,26 +19,29 @@ export default function Settings() {
   });
   const [preferences, setPreferences] = useState({
     lowStockAlerts: true,
-    emailReports: true,
+    emailReports: false,
     autoReorderSuggestions: true,
     dateFormat: 'MMM DD, YYYY',
   });
+  const [smtpConfigured, setSmtpConfigured] = useState(false);
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState({ text: '', type: '' });
 
   useEffect(() => {
-    api.get('/settings')
+    api
+      .get('/settings')
       .then(res => {
         if (res.data.profile) {
           setProfile({
             name: res.data.profile.name || 'John Doe',
-            email: res.data.profile.email || 'john@example.com',
+            email: res.data.profile.email || 'admin@stockwise.com',
             phone: res.data.profile.phone || '01712345678',
           });
         }
         if (res.data.business) {
           setBusiness({
-            businessName: res.data.business.name || 'StockPro',
+            businessName: res.data.business.name || 'StockWise AI',
             currency: res.data.business.currency || '৳',
             taxRate: res.data.business.taxRate ?? 0,
             lowStockThresholdDefault: res.data.business.lowStockThresholdDefault ?? 5,
@@ -48,13 +51,18 @@ export default function Settings() {
         if (res.data.preferences) {
           setPreferences(res.data.preferences);
         }
+        if (res.data.capabilities) {
+          setSmtpConfigured(Boolean(res.data.capabilities.smtpConfigured));
+        }
       })
       .catch(() => {});
   }, []);
 
   const handleSaveSettings = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setMsg({ text: '', type: '' });
+    setSubmitting(true);
     try {
       const { data } = await api.put('/settings', {
         ...profile,
@@ -69,25 +77,38 @@ export default function Settings() {
       setMsg({ text: 'Settings saved successfully.', type: 'success' });
     } catch (e2) {
       setMsg({ text: e2.response?.data?.message || 'Failed to update settings', type: 'error' });
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setMsg({ text: '', type: '' });
     if (pw.newPassword !== pw.confirmPassword) {
       setMsg({ text: 'New password and confirmation do not match.', type: 'error' });
       return;
     }
+    if (pw.newPassword === pw.currentPassword) {
+      setMsg({ text: 'New password must be different from your current password.', type: 'error' });
+      return;
+    }
+    setSubmitting(true);
     try {
-      await api.put('/settings/password', {
+      const { data } = await api.put('/settings/password', {
         currentPassword: pw.currentPassword,
         newPassword: pw.newPassword,
       });
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
       setMsg({ text: 'Password updated successfully.', type: 'success' });
       setPw({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } catch (e2) {
       setMsg({ text: e2.response?.data?.message || 'Password update failed', type: 'error' });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -95,7 +116,7 @@ export default function Settings() {
     <div className="space-y-5">
       <div>
         <h1 className="font-extrabold text-xl text-slate-900">Settings</h1>
-        <p className="text-xs text-slate-500 mt-0.5">Manage your profile and business settings.</p>
+        <p className="text-xs text-slate-500 mt-0.5">Manage your profile, security, and business configuration.</p>
       </div>
 
       {/* Card with Underline Tabs */}
@@ -104,9 +125,14 @@ export default function Settings() {
           {['Profile', 'Business', 'Security', 'Preferences'].map(t => (
             <button
               key={t}
-              onClick={() => { setTab(t); setMsg({ text: '', type: '' }); }}
+              onClick={() => {
+                setTab(t);
+                setMsg({ text: '', type: '' });
+              }}
               className={`pb-3 border-b-2 transition ${
-                tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+                tab === t
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
               {t}
@@ -115,11 +141,14 @@ export default function Settings() {
         </div>
 
         {msg.text && (
-          <div className={`p-3 rounded-xl text-xs font-medium ${
-            msg.type === 'success'
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : 'bg-red-50 text-red-700 border border-red-200'
-          }`}>
+          <div
+            role="alert"
+            className={`p-3 rounded-xl text-xs font-medium ${
+              msg.type === 'success'
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-red-50 text-red-700 border border-red-200'
+            }`}
+          >
             {msg.text}
           </div>
         )}
@@ -135,7 +164,9 @@ export default function Settings() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setMsg({ text: 'Avatar initials automatically sync with your profile name.', type: 'success' })}
+                  onClick={() =>
+                    setMsg({ text: 'Avatar initials automatically sync with your profile name.', type: 'success' })
+                  }
                   className="text-xs text-blue-600 font-semibold mt-2 hover:underline"
                 >
                   Change Photo
@@ -165,6 +196,7 @@ export default function Settings() {
                 <div>
                   <label className="block text-slate-500 mb-1 font-medium">Phone Number</label>
                   <input
+                    required
                     value={profile.phone}
                     onChange={e => setProfile({ ...profile, phone: e.target.value })}
                     className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-blue-500"
@@ -172,9 +204,10 @@ export default function Settings() {
                 </div>
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-2.5 font-semibold shadow-sm transition mt-2"
+                  disabled={submitting}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-2.5 font-semibold shadow-sm transition mt-2 disabled:opacity-50"
                 >
-                  Update Profile
+                  {submitting ? 'Saving...' : 'Update Profile'}
                 </button>
               </div>
             </div>
@@ -185,6 +218,9 @@ export default function Settings() {
         {tab === 'Business' && (
           <form onSubmit={handleSaveSettings} className="max-w-xl space-y-4 text-xs">
             <h2 className="font-bold text-sm text-slate-900">Business Configuration</h2>
+            <p className="text-slate-500">
+              These values apply across POS checkout tax calculation, currency formatting, and default product thresholds.
+            </p>
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-slate-500 mb-1 font-medium">Business Name</label>
@@ -207,17 +243,19 @@ export default function Settings() {
                 <input
                   type="number"
                   min="0"
+                  step="1"
                   value={business.lowStockThresholdDefault}
                   onChange={e => setBusiness({ ...business, lowStockThresholdDefault: e.target.value })}
                   className="w-full border rounded-xl px-3.5 py-2.5"
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-1 font-medium">Tax Rate (%)</label>
+                <label className="block text-slate-500 mb-1 font-medium">POS Sales Tax Rate (%)</label>
                 <input
                   type="number"
                   min="0"
                   max="100"
+                  step="0.1"
                   value={business.taxRate}
                   onChange={e => setBusiness({ ...business, taxRate: e.target.value })}
                   className="w-full border rounded-xl px-3.5 py-2.5"
@@ -232,8 +270,12 @@ export default function Settings() {
                 className="w-full border rounded-xl px-3.5 py-2.5"
               />
             </div>
-            <button type="submit" className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold">
-              Save Business Settings
+            <button
+              type="submit"
+              disabled={submitting}
+              className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : 'Save Business Settings'}
             </button>
           </form>
         )}
@@ -274,42 +316,75 @@ export default function Settings() {
                 className="w-full border rounded-xl px-3.5 py-2.5"
               />
             </div>
-            <button type="submit" className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold">
-              Update Password
+            <button
+              type="submit"
+              disabled={submitting}
+              className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold disabled:opacity-50"
+            >
+              {submitting ? 'Updating...' : 'Update Password'}
             </button>
           </form>
         )}
 
         {/* TAB 4: PREFERENCES */}
         {tab === 'Preferences' && (
-          <form onSubmit={handleSaveSettings} className="max-w-md space-y-4 text-xs">
+          <form onSubmit={handleSaveSettings} className="max-w-lg space-y-4 text-xs">
             <h2 className="font-bold text-sm text-slate-900">System Preferences</h2>
-            <label className="flex items-center justify-between p-3 border rounded-xl cursor-pointer">
-              <span>Enable Low-Stock Alert Notifications</span>
+            <label className="flex items-center justify-between p-3.5 border rounded-xl cursor-pointer hover:bg-slate-50">
+              <div>
+                <div className="font-semibold text-slate-800">Enable Low-Stock Alert Notifications</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Displays active low-stock and out-of-stock alerts in the header notification bell.
+                </div>
+              </div>
               <input
                 type="checkbox"
                 checked={preferences.lowStockAlerts}
                 onChange={e => setPreferences({ ...preferences, lowStockAlerts: e.target.checked })}
               />
             </label>
-            <label className="flex items-center justify-between p-3 border rounded-xl cursor-pointer">
-              <span>Enable Automated AI Reorder Suggestions</span>
+            <label className="flex items-center justify-between p-3.5 border rounded-xl cursor-pointer hover:bg-slate-50">
+              <div>
+                <div className="font-semibold text-slate-800">Enable Automated AI Reorder Suggestions</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Generates 14-day Holt demand forecast and safety-stock restock recommendations in AI Insights.
+                </div>
+              </div>
               <input
                 type="checkbox"
                 checked={preferences.autoReorderSuggestions}
                 onChange={e => setPreferences({ ...preferences, autoReorderSuggestions: e.target.checked })}
               />
             </label>
-            <label className="flex items-center justify-between p-3 border rounded-xl cursor-pointer">
-              <span>Monthly Email Performance Summaries</span>
+            <div className="flex items-center justify-between p-3.5 border border-slate-200 bg-slate-50/70 rounded-xl">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-700">Monthly Email Performance Summaries</span>
+                  {!smtpConfigured && (
+                    <span className="px-2 py-0.5 rounded bg-slate-200 text-slate-600 text-[10px] font-semibold">
+                      SMTP Not Configured
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  {smtpConfigured
+                    ? 'Sends monthly revenue and stockout summary reports via configured SMTP server.'
+                    : 'Outbound email delivery is not configured in this environment (set SMTP_HOST to enable).'}
+                </div>
+              </div>
               <input
                 type="checkbox"
-                checked={preferences.emailReports}
+                disabled={!smtpConfigured}
+                checked={smtpConfigured ? Boolean(preferences.emailReports) : false}
                 onChange={e => setPreferences({ ...preferences, emailReports: e.target.checked })}
               />
-            </label>
-            <button type="submit" className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold">
-              Save Preferences
+            </div>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : 'Save Preferences'}
             </button>
           </form>
         )}

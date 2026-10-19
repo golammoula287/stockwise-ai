@@ -41,7 +41,7 @@ export default function Login() {
         >
           <Link to="/" className="flex items-center gap-2 font-extrabold text-lg justify-center text-slate-900">
             <span className="bg-blue-600 text-white w-7 h-7 rounded-lg grid place-items-center text-sm">⬢</span>
-            <span>StockPro</span>
+            <span>StockWise AI</span>
           </Link>
 
           <h2 className="text-center font-extrabold text-2xl text-slate-900 mt-5">Welcome Back</h2>

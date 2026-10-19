@@ -27,13 +27,20 @@ function StatCard({ icon, iconBg, title, value, sub, subColor }) {
   );
 }
 
+function formatPct(pct, suffix = 'vs prior period') {
+  const n = Number(pct) || 0;
+  if (n > 0) return `+${n}% ${suffix}`;
+  if (n < 0) return `${n}% ${suffix}`;
+  return `0% ${suffix}`;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
   const [chart, setChart] = useState([]);
-  const [range, setRange] = useState('This Month');
-  const [dateFilter, setDateFilter] = useState('Oct 17, 2026 - Oct 19, 2026');
+  const [range, setRange] = useState('This Year');
+  const [dateFilter, setDateFilter] = useState('This Month');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
@@ -43,7 +50,7 @@ export default function Dashboard() {
       try {
         const [s, r, c] = await Promise.all([
           api.get('/dashboard/stats', { params: { dateFilter } }),
-          api.get('/dashboard/recent-sales?limit=4'),
+          api.get('/dashboard/recent-sales', { params: { limit: 5, dateFilter } }),
           api.get('/dashboard/sales-overview', { params: { range } }),
         ]);
         if (!active) return;
@@ -56,7 +63,9 @@ export default function Dashboard() {
         if (active) setLoading(false);
       }
     })();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [range, dateFilter]);
 
   if (loading) {
@@ -75,6 +84,7 @@ export default function Dashboard() {
   }
 
   const firstName = (user?.name || 'John').split(' ')[0];
+  const currency = stats?.currency || '৳';
 
   return (
     <div className="space-y-6">
@@ -82,7 +92,9 @@ export default function Dashboard() {
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">Good Morning, {firstName}!</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Here&apos;s an overview of your business today.</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Live business metrics for <strong>{stats?.dateFilter || dateFilter}</strong>.
+          </p>
         </div>
         <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-600 shadow-sm">
           <span>📅</span>
@@ -92,9 +104,11 @@ export default function Dashboard() {
             className="bg-transparent outline-none font-medium cursor-pointer"
             aria-label="Date range"
           >
-            <option>Oct 17, 2026 - Oct 19, 2026</option>
-            <option>Oct 01, 2026 - Oct 19, 2026</option>
-            <option>Last 30 Days</option>
+            <option value="This Month">This Month</option>
+            <option value="Last 30 Days">Last 30 Days</option>
+            <option value="Last 7 Days">Last 7 Days</option>
+            <option value="Today">Today</option>
+            <option value="All Time">All Time</option>
           </select>
         </div>
       </div>
@@ -106,31 +120,35 @@ export default function Dashboard() {
           iconBg="bg-emerald-100 text-emerald-700"
           title="Total Products"
           value={stats.totalProducts}
-          sub={`+${stats.changes?.products ?? 12}% from last month`}
-          subColor="text-emerald-600"
+          sub={formatPct(stats.changes?.products, 'from last month')}
+          subColor={(stats.changes?.products || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}
         />
         <StatCard
           icon="🛒"
           iconBg="bg-blue-100 text-blue-700"
-          title="Total Sales"
+          title={`Sales (${stats.dateFilter || dateFilter})`}
           value={stats.totalSales}
-          sub={`+${stats.changes?.sales ?? 8}% from last month`}
-          subColor="text-emerald-600"
+          sub={formatPct(stats.changes?.sales, 'vs prior period')}
+          subColor={(stats.changes?.sales || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}
         />
         <StatCard
-          icon="৳"
+          icon={currency}
           iconBg="bg-amber-100 text-amber-700"
-          title="Total Revenue"
-          value={`৳ ${Number(stats.totalRevenue || 0).toLocaleString()}`}
-          sub={`+${stats.changes?.revenue ?? 15}% from last month (Profit: ৳${Number(stats.totalProfit || 0).toLocaleString()})`}
-          subColor="text-emerald-600"
+          title={`Revenue (${stats.dateFilter || dateFilter})`}
+          value={`${currency} ${Number(stats.totalRevenue || 0).toLocaleString()}`}
+          sub={`${formatPct(stats.changes?.revenue, 'vs prior')} · Profit: ${currency}${Number(stats.totalProfit || 0).toLocaleString()}`}
+          subColor={(stats.changes?.revenue || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}
         />
         <StatCard
           icon="⚠"
           iconBg="bg-red-100 text-red-600"
           title="Low Stock Items"
           value={stats.lowStockCount}
-          sub={stats.lowStockCount > 0 ? 'Needs attention' : 'All stocked'}
+          sub={
+            stats.lowStockCount > 0
+              ? `${stats.outOfStockCount || 0} out of stock · At/below threshold`
+              : 'All products above threshold'
+          }
           subColor={stats.lowStockCount > 0 ? 'text-red-600' : 'text-emerald-600'}
         />
       </div>
@@ -140,15 +158,18 @@ export default function Dashboard() {
         {/* Sales Overview Chart */}
         <div className="lg:col-span-7 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-bold text-slate-900 text-base">Sales Overview</h2>
+            <div>
+              <h2 className="font-bold text-slate-900 text-base">Sales Overview</h2>
+              <p className="text-[11px] text-slate-400">Actual revenue recorded in PostgreSQL</p>
+            </div>
             <select
               value={range}
               onChange={e => setRange(e.target.value)}
               className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 font-medium outline-none"
               aria-label="Chart range"
             >
-              <option>This Month</option>
-              <option>This Year</option>
+              <option value="This Year">This Year (Monthly)</option>
+              <option value="This Month">Last 30 Days (3-Day Intervals)</option>
             </select>
           </div>
           <div className="h-[250px]">
@@ -168,7 +189,7 @@ export default function Dashboard() {
                   tickLine={false}
                   tickFormatter={v => (v >= 1000 ? `${Math.round(v / 1000)}K` : v)}
                 />
-                <Tooltip formatter={v => [`৳ ${Number(v).toLocaleString()}`, 'Sales']} />
+                <Tooltip formatter={v => [`${currency} ${Number(v).toLocaleString()}`, 'Sales']} />
                 <Area
                   type="monotone"
                   dataKey="sales"
@@ -194,7 +215,7 @@ export default function Dashboard() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-slate-400 border-b border-slate-100">
-                  <th className="text-left py-2 font-medium">#</th>
+                  <th className="text-left py-2 font-medium">Invoice</th>
                   <th className="text-left py-2 font-medium">Customer</th>
                   <th className="text-left py-2 font-medium">Amount</th>
                   <th className="text-right py-2 font-medium">Date</th>
@@ -203,9 +224,11 @@ export default function Dashboard() {
               <tbody className="divide-y divide-slate-100">
                 {recent.map((r, i) => (
                   <tr key={r.id || i} className="hover:bg-slate-50/80">
-                    <td className="py-3 text-slate-500">{i + 1}</td>
+                    <td className="py-3 font-semibold text-blue-600">{r.invoiceNumber || `#${i + 1}`}</td>
                     <td className="py-3 font-medium text-slate-800">{r.customer}</td>
-                    <td className="py-3 font-semibold text-slate-900">৳{Number(r.amount).toLocaleString()}</td>
+                    <td className="py-3 font-semibold text-slate-900">
+                      {currency}{Number(r.amount).toLocaleString()}
+                    </td>
                     <td className="py-3 text-right text-slate-500">
                       {new Date(r.date).toLocaleDateString('en-US', {
                         month: 'short',
@@ -219,7 +242,9 @@ export default function Dashboard() {
               </tbody>
             </table>
             {recent.length === 0 && (
-              <div className="text-center py-8 text-xs text-slate-400">No recent sales recorded yet.</div>
+              <div className="text-center py-8 text-xs text-slate-400">
+                No sales recorded in the selected date range.
+              </div>
             )}
           </div>
         </div>
