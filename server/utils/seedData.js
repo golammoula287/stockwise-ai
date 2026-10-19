@@ -4,6 +4,7 @@ const Customer = require('../models/Customer');
 const Sale = require('../models/Sale');
 const Setting = require('../models/Setting');
 const StockLog = require('../models/StockLog');
+const Counter = require('../models/Counter');
 
 async function seedDatabase({ force = false } = {}) {
   if (!force) {
@@ -17,27 +18,32 @@ async function seedDatabase({ force = false } = {}) {
       Sale.deleteMany({}),
       Setting.deleteMany({}),
       StockLog.deleteMany({}),
+      Counter.deleteMany({}),
     ]);
   }
 
+  const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@stockwise.com').toLowerCase().trim();
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'admin123';
+
   const admin = await User.create({
     name: 'John Doe',
-    email: 'admin@stockwise.com',
-    password: 'admin123',
+    email: adminEmail,
+    password: adminPassword,
     role: 'admin',
     phone: '01712345678',
     businessName: 'StockPro',
   });
 
-  // Secondary admin alias matching screenshot profile email
-  await User.create({
-    name: 'John Doe',
-    email: 'john@example.com',
-    password: 'admin123',
-    role: 'admin',
-    phone: '01712345678',
-    businessName: 'StockPro',
-  });
+  if (adminEmail !== 'john@example.com') {
+    await User.create({
+      name: 'John Doe',
+      email: 'john@example.com',
+      password: adminPassword,
+      role: 'admin',
+      phone: '01712345678',
+      businessName: 'StockPro',
+    });
+  }
 
   await Setting.create({
     user: admin._id,
@@ -71,7 +77,6 @@ async function seedDatabase({ force = false } = {}) {
 
   const byName = Object.fromEntries(products.map(p => [p.name, p]));
 
-  // Initial stock logs
   await StockLog.insertMany(products.map(p => ({
     product: p._id,
     productName: p.name,
@@ -136,9 +141,7 @@ async function seedDatabase({ force = false } = {}) {
     };
   };
 
-  // Historical monthly sales earlier in the year + last month + current month
   const historicalSales = [
-    // Last month sales (~106,000 BDT so this month's 125,000 BDT is +18%)
     buildSaleDoc({
       invoiceNumber: 'INV-1001',
       customer: customers[0],
@@ -152,7 +155,6 @@ async function seedDatabase({ force = false } = {}) {
       date: new Date(currentYear, currentMonth - 1, 19, 15, 30),
       discount: 2500,
     }),
-    // Current month sales totaling 125,000 BDT with recent 4 matching screenshot
     buildSaleDoc({
       invoiceNumber: 'INV-1003',
       customer: customers[0],
@@ -195,21 +197,13 @@ async function seedDatabase({ force = false } = {}) {
     buildSaleDoc({
       invoiceNumber: 'INV-1009',
       customer: customers[0],
-      items: [{ name: 'USB Cable', quantity: 1 }],
+      items: [{ name: 'USB Cable', quantity: 1, overridePrice: 1200 }],
       date: new Date(now.getTime() - 6 * 60 * 60 * 1000),
-      overridePrice: 1200,
     }),
   ];
 
-  // FixINV-1009 item overridePrice
-  historicalSales[historicalSales.length - 1] = buildSaleDoc({
-    invoiceNumber: 'INV-1009',
-    customer: customers[0],
-    items: [{ name: 'USB Cable', quantity: 1, overridePrice: 1200 }],
-    date: new Date(now.getTime() - 6 * 60 * 60 * 1000),
-  });
-
   await Sale.collection.insertMany(historicalSales);
+  await Counter.findByIdAndUpdate('invoiceNumber', { $set: { seq: 1009 } }, { upsert: true, new: true });
 
   return { seeded: true, adminEmail: admin.email };
 }

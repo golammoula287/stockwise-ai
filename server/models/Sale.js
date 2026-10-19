@@ -6,13 +6,21 @@ const saleItemSchema = new mongoose.Schema({
   category: { type: String },
   price: { type: Number, required: true, min: 0 },
   cost: { type: Number, default: 0, min: 0 },
-  quantity: { type: Number, required: true, min: 1 },
+  quantity: {
+    type: Number,
+    required: true,
+    min: 1,
+    validate: {
+      validator: Number.isInteger,
+      message: 'Quantity must be a positive integer',
+    },
+  },
   subtotal: { type: Number, required: true, min: 0 },
   profit: { type: Number, default: 0 },
 }, { _id: false });
 
 const saleSchema = new mongoose.Schema({
-  invoiceNumber: { type: String, index: true },
+  invoiceNumber: { type: String, required: true, unique: true, index: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', default: null },
   customerName: { type: String, default: 'Walk-in Customer' },
   customerPhone: { type: String, default: '' },
