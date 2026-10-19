@@ -1,23 +1,14 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const { body, validationResult } = require('express-validator');
-const Product = require('../models/Product');
-const StockLog = require('../models/StockLog');
-const Sale = require('../models/Sale');
+const { getPrisma, isValidId, computeProductStatus } = require('../config/db');
 const { protect, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
-function computeStatus(p) {
-  const threshold = p.lowStockThreshold ?? 5;
-  if (p.stock === 0) return 'Out of Stock';
-  if (p.stock <= threshold) return 'Low Stock';
-  return 'In Stock';
-}
-
 router.get('/categories', async (req, res, next) => {
   try {
-    const products = await Product.find().lean();
+    const prisma = getPrisma();
+    const products = await prisma.product.findMany();
     const map = {};
     for (const p of products) {
       const cat = p.category || 'Uncategorized';
@@ -39,12 +30,15 @@ router.get('/categories', async (req, res, next) => {
 
 router.get('/stock-history', async (req, res, next) => {
   try {
+    const prisma = getPrisma();
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
-    const logs = await StockLog.find()
-      .populate('performedBy', 'name email')
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
+    const logs = await prisma.stockLog.findMany({
+      include: {
+        performedBy: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
     res.json(logs);
   } catch (err) {
     next(err);
@@ -53,23 +47,31 @@ router.get('/stock-history', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   try {
+    const prisma = getPrisma();
     const { search, category, status, lowStockOnly, page = 1, limit = 10 } = req.query;
-    const q = {};
+    const where = {};
+
     if (search && search.trim()) {
-      q.$or = [
-        { name: { $regex: search.trim(), $options: 'i' } },
-        { category: { $regex: search.trim(), $options: 'i' } },
-        { sku: { $regex: search.trim(), $options: 'i' } },
+      const term = search.trim();
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { category: { contains: term, mode: 'insensitive' } },
+        { sku: { contains: term, mode: 'insensitive' } },
       ];
     }
     if (category && category !== 'All Categories' && category !== 'All') {
-      q.category = category;
+      where.category = category;
     }
 
-    const rawProducts = await Product.find(q).sort({ createdAt: 1 }).lean();
+    const rawProducts = await prisma.product.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+    });
+
     let products = rawProducts.map(p => ({
       ...p,
-      status: computeStatus(p),
+      _id: p.id,
+      status: computeProductStatus(p),
     }));
 
     if (lowStockOnly === 'true') {
@@ -96,10 +98,11 @@ router.get('/', async (req, res, next) => {
 
 router.get('/:id', async (req, res, next) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
-    const p = await Product.findById(req.params.id);
+    const prisma = getPrisma();
+    const p = await prisma.product.findUnique({ where: { id: req.params.id } });
     if (!p) return res.status(404).json({ message: 'Product not found' });
     res.json(p);
   } catch (err) {
@@ -120,31 +123,45 @@ router.post('/', protect, adminOnly, [
       return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
     }
     const { name, category, price, cost, stock, lowStockThreshold, description, image, sku } = req.body;
-    const doc = await Product.create({
-      name: name.trim(),
-      category: category.trim(),
-      price: Number(price),
-      cost: cost !== undefined && cost !== '' ? Number(cost) : Math.round(Number(price) * 0.75),
-      stock: Number(stock),
-      lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 5,
-      description,
-      image,
-      sku: sku || undefined,
+    const prisma = getPrisma();
+
+    const doc = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          name: name.trim(),
+          category: category.trim(),
+          price: Number(price),
+          cost: cost !== undefined && cost !== '' ? Number(cost) : Math.round(Number(price) * 0.75),
+          stock: Number(stock),
+          lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 5,
+          description: description || null,
+          image: image || null,
+          sku: sku ? sku.trim() : null,
+        },
+      });
+
+      await tx.stockLog.create({
+        data: {
+          productId: created.id,
+          productName: created.name,
+          category: created.category,
+          type: 'initial',
+          change: created.stock,
+          previousStock: 0,
+          newStock: created.stock,
+          note: 'Product created',
+          performedById: req.user.id,
+        },
+      });
+
+      return created;
     });
 
-    await StockLog.create({
-      product: doc._id,
-      productName: doc.name,
-      category: doc.category,
-      type: 'initial',
-      change: doc.stock,
-      previousStock: 0,
-      newStock: doc.stock,
-      note: 'Product created',
-      performedBy: req.user._id,
+    res.status(201).json({
+      ...doc,
+      _id: doc.id,
+      status: computeProductStatus(doc),
     });
-
-    res.status(201).json(doc);
   } catch (err) {
     next(err);
   }
@@ -157,7 +174,7 @@ router.put('/:id', protect, adminOnly, [
   body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('Threshold must be an integer >= 0'),
 ], async (req, res, next) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
     const errors = validationResult(req);
@@ -165,46 +182,61 @@ router.put('/:id', protect, adminOnly, [
       return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
     }
 
+    const prisma = getPrisma();
+    const existing = await prisma.product.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ message: 'Product not found' });
+
     const updateFields = {};
-    const allowed = ['name', 'category', 'price', 'cost', 'stock', 'lowStockThreshold', 'description', 'image', 'sku'];
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) {
-        updateFields[key] = req.body[key];
-      }
+    if (req.body.name !== undefined) updateFields.name = String(req.body.name).trim();
+    if (req.body.category !== undefined) updateFields.category = String(req.body.category).trim();
+    if (req.body.price !== undefined) updateFields.price = Number(req.body.price);
+    if (req.body.cost !== undefined && req.body.cost !== '') updateFields.cost = Number(req.body.cost);
+    if (req.body.lowStockThreshold !== undefined) {
+      updateFields.lowStockThreshold = Number(req.body.lowStockThreshold);
     }
-    if (updateFields.stock !== undefined) {
-      const parsedStock = Number(updateFields.stock);
+    if (req.body.description !== undefined) updateFields.description = req.body.description;
+    if (req.body.image !== undefined) updateFields.image = req.body.image;
+    if (req.body.sku !== undefined) updateFields.sku = req.body.sku || null;
+
+    if (req.body.stock !== undefined) {
+      const parsedStock = Number(req.body.stock);
       if (!Number.isInteger(parsedStock) || parsedStock < 0) {
         return res.status(400).json({ message: 'Stock must be a non-negative integer' });
       }
       updateFields.stock = parsedStock;
     }
 
-    const beforeDoc = await Product.findOneAndUpdate(
-      { _id: req.params.id },
-      { $set: updateFields },
-      { new: false, runValidators: true }
-    );
-    if (!beforeDoc) return res.status(404).json({ message: 'Product not found' });
-
-    const updated = await Product.findById(req.params.id);
-
-    if (updateFields.stock !== undefined && updateFields.stock !== beforeDoc.stock) {
-      const diff = updated.stock - beforeDoc.stock;
-      await StockLog.create({
-        product: updated._id,
-        productName: updated.name,
-        category: updated.category,
-        type: diff > 0 ? 'restock' : 'adjustment',
-        change: diff,
-        previousStock: beforeDoc.stock,
-        newStock: updated.stock,
-        note: req.body.note || 'Manual product edit',
-        performedBy: req.user._id,
+    const updated = await prisma.$transaction(async (tx) => {
+      const prod = await tx.product.update({
+        where: { id: req.params.id },
+        data: updateFields,
       });
-    }
 
-    res.json(updated);
+      if (updateFields.stock !== undefined && updateFields.stock !== existing.stock) {
+        const diff = prod.stock - existing.stock;
+        await tx.stockLog.create({
+          data: {
+            productId: prod.id,
+            productName: prod.name,
+            category: prod.category,
+            type: diff > 0 ? 'restock' : 'adjustment',
+            change: diff,
+            previousStock: existing.stock,
+            newStock: prod.stock,
+            note: req.body.note || 'Manual product edit',
+            performedById: req.user.id,
+          },
+        });
+      }
+
+      return prod;
+    });
+
+    res.json({
+      ...updated,
+      _id: updated.id,
+      status: computeProductStatus(updated),
+    });
   } catch (err) {
     next(err);
   }
@@ -212,7 +244,7 @@ router.put('/:id', protect, adminOnly, [
 
 router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
     const { delta, note } = req.body;
@@ -220,59 +252,83 @@ router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
       return res.status(400).json({ message: 'Stock adjustment delta must be a non-zero integer' });
     }
 
-    const filter = delta < 0
-      ? { _id: req.params.id, stock: { $gte: Math.abs(delta) } }
-      : { _id: req.params.id };
+    const prisma = getPrisma();
+    const productId = req.params.id;
 
-    const beforeDoc = await Product.findOneAndUpdate(
-      filter,
-      { $inc: { stock: delta } },
-      { new: false }
-    );
+    const result = await prisma.$transaction(async (tx) => {
+      // Atomic row-level conditional update in PostgreSQL
+      const rows = await tx.$queryRaw`
+        UPDATE "products"
+        SET "stock" = "stock" + ${delta}, "updatedAt" = NOW()
+        WHERE "id" = ${productId} AND ("stock" + ${delta}) >= 0
+        RETURNING "id", "name", "sku", "category", "price", "cost", "stock", "lowStockThreshold", "description", "image", "createdAt", "updatedAt";
+      `;
 
-    if (!beforeDoc) {
-      const exists = await Product.exists({ _id: req.params.id });
-      if (!exists) return res.status(404).json({ message: 'Product not found' });
-      return res.status(400).json({ message: 'Stock cannot go negative' });
-    }
+      if (!rows || rows.length === 0) {
+        const exists = await tx.product.findUnique({ where: { id: productId } });
+        if (!exists) {
+          const notFound = new Error('Product not found');
+          notFound.statusCode = 404;
+          throw notFound;
+        }
+        const negErr = new Error('Stock cannot go negative');
+        negErr.statusCode = 400;
+        throw negErr;
+      }
 
-    const prevStock = beforeDoc.stock;
-    const newStock = prevStock + delta;
+      const updatedRow = rows[0];
+      const newStock = updatedRow.stock;
+      const prevStock = newStock - delta;
 
-    await StockLog.create({
-      product: beforeDoc._id,
-      productName: beforeDoc.name,
-      category: beforeDoc.category,
-      type: delta > 0 ? 'restock' : 'adjustment',
-      change: delta,
-      previousStock: prevStock,
-      newStock,
-      note: note || (delta > 0 ? 'Stock restocked' : 'Stock adjusted'),
-      performedBy: req.user._id,
+      await tx.stockLog.create({
+        data: {
+          productId: updatedRow.id,
+          productName: updatedRow.name,
+          category: updatedRow.category,
+          type: delta > 0 ? 'restock' : 'adjustment',
+          change: delta,
+          previousStock: prevStock,
+          newStock,
+          note: note || (delta > 0 ? 'Stock restocked' : 'Stock adjusted'),
+          performedById: req.user.id,
+        },
+      });
+
+      return updatedRow;
     });
 
-    const updated = await Product.findById(req.params.id);
-    res.json(updated);
+    res.json({
+      ...result,
+      _id: result.id,
+      status: computeProductStatus(result),
+    });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
     next(err);
   }
 });
 
 router.delete('/:id', protect, adminOnly, async (req, res, next) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
-    const hasSales = await Sale.exists({ 'items.product': req.params.id });
-    if (hasSales) {
+    const prisma = getPrisma();
+    const saleItemCount = await prisma.saleItem.count({
+      where: { productId: req.params.id },
+    });
+    if (saleItemCount > 0) {
       return res.status(400).json({
         message: 'Cannot delete a product with recorded sales history. Adjust its stock to 0 instead.',
       });
     }
-    const del = await Product.findByIdAndDelete(req.params.id);
-    if (!del) return res.status(404).json({ message: 'Product not found' });
-    await StockLog.deleteMany({ product: del._id });
-    res.json({ message: 'Product deleted successfully', id: del._id });
+    const existing = await prisma.product.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ message: 'Product not found' });
+
+    await prisma.product.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Product deleted successfully', id: existing.id, _id: existing.id });
   } catch (err) {
     next(err);
   }

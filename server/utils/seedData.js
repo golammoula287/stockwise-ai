@@ -1,68 +1,72 @@
-const User = require('../models/User');
-const Product = require('../models/Product');
-const Customer = require('../models/Customer');
-const Sale = require('../models/Sale');
-const Setting = require('../models/Setting');
-const StockLog = require('../models/StockLog');
-const Counter = require('../models/Counter');
+const bcrypt = require('bcryptjs');
+const { getPrisma } = require('../config/db');
 
 async function seedDatabase({ force = false } = {}) {
+  const prisma = getPrisma();
+
   if (!force) {
-    const existingUsers = await User.countDocuments();
+    const existingUsers = await prisma.user.count();
     if (existingUsers > 0) return { seeded: false };
   } else {
-    await Promise.all([
-      User.deleteMany({}),
-      Product.deleteMany({}),
-      Customer.deleteMany({}),
-      Sale.deleteMany({}),
-      Setting.deleteMany({}),
-      StockLog.deleteMany({}),
-      Counter.deleteMany({}),
-    ]);
+    // Delete in foreign-key dependency order
+    await prisma.saleItem.deleteMany({});
+    await prisma.stockLog.deleteMany({});
+    await prisma.sale.deleteMany({});
+    await prisma.setting.deleteMany({});
+    await prisma.customer.deleteMany({});
+    await prisma.product.deleteMany({});
+    await prisma.user.deleteMany({});
+    await prisma.counter.deleteMany({});
   }
 
   const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@stockwise.com').toLowerCase().trim();
   const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'admin123';
+  const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
-  const admin = await User.create({
-    name: 'John Doe',
-    email: adminEmail,
-    password: adminPassword,
-    role: 'admin',
-    phone: '01712345678',
-    businessName: 'StockPro',
-  });
-
-  if (adminEmail !== 'john@example.com') {
-    await User.create({
+  const admin = await prisma.user.create({
+    data: {
       name: 'John Doe',
-      email: 'john@example.com',
-      password: adminPassword,
+      email: adminEmail,
+      password: hashedPassword,
       role: 'admin',
       phone: '01712345678',
       businessName: 'StockPro',
-    });
-  }
-
-  await Setting.create({
-    user: admin._id,
-    businessName: 'StockPro',
-    currency: '৳',
-    taxRate: 0,
-    lowStockThresholdDefault: 5,
-    businessEmail: 'john@example.com',
-    businessPhone: '01712345678',
-    businessAddress: 'Banani, Dhaka, Bangladesh',
-    preferences: {
-      lowStockAlerts: true,
-      emailReports: true,
-      autoReorderSuggestions: true,
-      dateFormat: 'MMM DD, YYYY',
     },
   });
 
-  const products = await Product.insertMany([
+  if (adminEmail !== 'john@example.com') {
+    await prisma.user.create({
+      data: {
+        name: 'John Doe',
+        email: 'john@example.com',
+        password: hashedPassword,
+        role: 'admin',
+        phone: '01712345678',
+        businessName: 'StockPro',
+      },
+    });
+  }
+
+  await prisma.setting.create({
+    data: {
+      userId: admin.id,
+      businessName: 'StockPro',
+      currency: '৳',
+      taxRate: 0,
+      lowStockThresholdDefault: 5,
+      businessEmail: 'john@example.com',
+      businessPhone: '01712345678',
+      businessAddress: 'Banani, Dhaka, Bangladesh',
+      preferences: {
+        lowStockAlerts: true,
+        emailReports: true,
+        autoReorderSuggestions: true,
+        dateFormat: 'MMM DD, YYYY',
+      },
+    },
+  });
+
+  const productSeedRows = [
     { name: 'Laptop', category: 'Electronics', price: 80000, cost: 65000, stock: 25, lowStockThreshold: 5, sku: 'LP-001', description: 'High-performance business laptop 16GB RAM 512GB SSD' },
     { name: 'Wireless Mouse', category: 'Accessories', price: 2500, cost: 1800, stock: 5, lowStockThreshold: 8, sku: 'MS-002', description: 'Ergonomic 2.4GHz optical wireless mouse' },
     { name: 'Keyboard', category: 'Accessories', price: 3500, cost: 2500, stock: 0, lowStockThreshold: 5, sku: 'KB-003', description: 'Mechanical RGB tactile keyboard' },
@@ -73,34 +77,48 @@ async function seedDatabase({ force = false } = {}) {
     { name: 'Webcam HD', category: 'Electronics', price: 4500, cost: 3200, stock: 18, lowStockThreshold: 5, sku: 'WC-008', description: '1080p Full HD streaming webcam with mic' },
     { name: 'Headphones', category: 'Audio', price: 6000, cost: 4200, stock: 20, lowStockThreshold: 5, sku: 'HP-009', description: 'Active noise-cancelling over-ear headphones' },
     { name: 'SSD 1TB', category: 'Storage', price: 9500, cost: 7500, stock: 15, lowStockThreshold: 5, sku: 'SD-010', description: 'NVMe M.2 Gen4 internal solid state drive' },
-  ]);
+  ];
+
+  const products = [];
+  for (const row of productSeedRows) {
+    const p = await prisma.product.create({ data: row });
+    products.push(p);
+  }
 
   const byName = Object.fromEntries(products.map(p => [p.name, p]));
 
-  await StockLog.insertMany(products.map(p => ({
-    product: p._id,
-    productName: p.name,
-    category: p.category,
-    type: 'initial',
-    change: p.stock,
-    previousStock: 0,
-    newStock: p.stock,
-    note: 'Initial inventory seed',
-    performedBy: admin._id,
-  })));
+  await prisma.stockLog.createMany({
+    data: products.map(p => ({
+      productId: p.id,
+      productName: p.name,
+      category: p.category,
+      type: 'initial',
+      change: p.stock,
+      previousStock: 0,
+      newStock: p.stock,
+      note: 'Initial inventory seed',
+      performedById: admin.id,
+    })),
+  });
 
-  const customers = await Customer.insertMany([
+  const customerSeedRows = [
     { name: 'Rahim Uddin', phone: '01711111111', email: 'rahim@example.com', address: 'Dhanmondi, Dhaka', totalSpent: 81200, totalOrders: 2 },
     { name: 'Ayesha Khan', phone: '01722222222', email: 'ayesha@example.com', address: 'Gulshan, Dhaka', totalSpent: 22500, totalOrders: 2 },
     { name: 'Tarek Islam', phone: '01733333333', email: 'tarek@example.com', address: 'Uttara, Dhaka', totalSpent: 17800, totalOrders: 2 },
     { name: 'Nusrat Jahan', phone: '01744444444', email: 'nusrat@example.com', address: 'Mirpur, Dhaka', totalSpent: 21650, totalOrders: 2 },
-  ]);
+  ];
+
+  const customers = [];
+  for (const row of customerSeedRows) {
+    const c = await prisma.customer.create({ data: row });
+    customers.push(c);
+  }
 
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
 
-  const buildSaleDoc = ({ customer, items, date, discount = 0, paymentMethod = 'cash', invoiceNumber }) => {
+  const buildSaleData = ({ customer, items, date, discount = 0, paymentMethod = 'cash', invoiceNumber }) => {
     const saleItems = items.map(it => {
       const p = byName[it.name];
       const price = it.overridePrice ?? p.price;
@@ -108,7 +126,7 @@ async function seedDatabase({ force = false } = {}) {
       const subtotal = price * it.quantity;
       const profit = (price - cost) * it.quantity;
       return {
-        product: p._id,
+        productId: p.id,
         name: p.name,
         category: p.category,
         price,
@@ -124,77 +142,79 @@ async function seedDatabase({ force = false } = {}) {
     const profit = total - totalCost;
     return {
       invoiceNumber,
-      customer: customer?._id || null,
+      customerId: customer?.id || null,
       customerName: customer?.name || 'Walk-in Customer',
       customerPhone: customer?.phone || '',
       customerEmail: customer?.email || '',
-      items: saleItems,
       subtotal,
       discount,
       total,
       totalCost,
       profit,
       paymentMethod,
-      soldBy: admin._id,
+      soldById: admin.id,
       createdAt: date,
       updatedAt: date,
+      items: {
+        create: saleItems,
+      },
     };
   };
 
   const historicalSales = [
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1001',
       customer: customers[0],
       items: [{ name: 'Laptop', quantity: 1 }, { name: 'Wireless Mouse', quantity: 2 }],
       date: new Date(currentYear, currentMonth - 1, 12, 11, 0),
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1002',
       customer: customers[1],
       items: [{ name: 'Monitor', quantity: 1 }, { name: 'Keyboard', quantity: 1 }],
       date: new Date(currentYear, currentMonth - 1, 19, 15, 30),
       discount: 2500,
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1003',
       customer: customers[0],
       items: [{ name: 'Laptop', quantity: 1 }],
       date: new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000),
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1004',
       customer: customers[1],
       items: [{ name: 'Monitor', quantity: 1 }, { name: 'Keyboard', quantity: 2 }],
       date: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1005',
       customer: customers[2],
       items: [{ name: 'Keyboard', quantity: 3 }, { name: 'Wireless Mouse', quantity: 1 }],
       date: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
       discount: 650,
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1006',
       customer: customers[3],
       items: [{ name: 'USB Cable', quantity: 1 }, { name: 'Laptop Bag', quantity: 1 }],
       date: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
       discount: 1150,
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1007',
       customer: customers[2],
       items: [{ name: 'USB Cable', quantity: 1 }],
       date: new Date(now.getTime() - 36 * 60 * 60 * 1000),
       discount: 200,
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1008',
       customer: customers[1],
       items: [{ name: 'Wireless Mouse', quantity: 1 }],
       date: new Date(now.getTime() - 20 * 60 * 60 * 1000),
     }),
-    buildSaleDoc({
+    buildSaleData({
       invoiceNumber: 'INV-1009',
       customer: customers[0],
       items: [{ name: 'USB Cable', quantity: 1, overridePrice: 1200 }],
@@ -202,8 +222,15 @@ async function seedDatabase({ force = false } = {}) {
     }),
   ];
 
-  await Sale.collection.insertMany(historicalSales);
-  await Counter.findByIdAndUpdate('invoiceNumber', { $set: { seq: 1009 } }, { upsert: true, new: true });
+  for (const saleData of historicalSales) {
+    await prisma.sale.create({ data: saleData });
+  }
+
+  await prisma.counter.upsert({
+    where: { id: 'invoiceNumber' },
+    update: { seq: 1009 },
+    create: { id: 'invoiceNumber', seq: 1009 },
+  });
 
   return { seeded: true, adminEmail: admin.email };
 }
