@@ -1,0 +1,173 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  staff
+}
+
+enum PaymentMethod {
+  cash
+  card
+  bkash
+  other
+}
+
+enum StockLogType {
+  initial
+  sale
+  restock
+  adjustment
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String
+  email        String     @unique
+  password     String
+  role         Role       @default(admin)
+  avatar       String?
+  phone        String?
+  businessName String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  sales        Sale[]
+  stockLogs    StockLog[]
+  setting      Setting?
+
+  @@map("users")
+}
+
+model Product {
+  id                String     @id @default(uuid())
+  name              String
+  sku               String?    @unique
+  category          String
+  price             Float
+  cost              Float      @default(0)
+  stock             Int        @default(0)
+  lowStockThreshold Int        @default(5)
+  description       String?
+  image             String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  saleItems         SaleItem[]
+  stockLogs         StockLog[]
+
+  @@index([category, stock])
+  @@index([name])
+  @@map("products")
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  name        String
+  email       String?
+  phone       String
+  address     String?
+  totalSpent  Float    @default(0)
+  totalOrders Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  sales       Sale[]
+
+  @@index([phone])
+  @@index([name])
+  @@map("customers")
+}
+
+model Sale {
+  id            String        @id @default(uuid())
+  invoiceNumber String        @unique
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String        @default("Walk-in Customer")
+  customerPhone String        @default("")
+  customerEmail String        @default("")
+  subtotal      Float
+  discount      Float         @default(0)
+  total         Float
+  totalCost     Float         @default(0)
+  profit        Float         @default(0)
+  paymentMethod PaymentMethod @default(cash)
+  soldById      String?
+  soldBy        User?         @relation(fields: [soldById], references: [id], onDelete: SetNull)
+  items         SaleItem[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([createdAt(sort: Desc)])
+  @@index([customerId])
+  @@map("sales")
+}
+
+model SaleItem {
+  id        String  @id @default(uuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  name      String
+  category  String?
+  price     Float
+  cost      Float   @default(0)
+  quantity  Int
+  subtotal  Float
+  profit    Float   @default(0)
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model StockLog {
+  id            String       @id @default(uuid())
+  productId     String
+  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productName   String
+  category      String?
+  type          StockLogType
+  change        Int
+  previousStock Int
+  newStock      Int
+  note          String       @default("")
+  performedById String?
+  performedBy   User?        @relation(fields: [performedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([createdAt(sort: Desc)])
+  @@index([productId])
+  @@map("stock_logs")
+}
+
+model Setting {
+  id                       String   @id @default(uuid())
+  userId                   String?  @unique
+  user                     User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName             String   @default("StockPro")
+  currency                 String   @default("৳")
+  taxRate                  Float    @default(0)
+  lowStockThresholdDefault Int      @default(5)
+  businessEmail            String   @default("info@stockpro.com")
+  businessPhone            String   @default("01712345678")
+  businessAddress          String   @default("Dhaka, Bangladesh")
+  preferences              Json
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model Counter {
+  id  String @id
+  seq Int    @default(1000)
+
+  @@map("counters")
+}
