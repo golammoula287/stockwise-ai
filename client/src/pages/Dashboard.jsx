@@ -42,9 +42,9 @@ export default function Dashboard() {
     (async () => {
       try {
         const [s, r, c] = await Promise.all([
-          api.get('/dashboard/stats'),
+          api.get('/dashboard/stats', { params: { dateFilter } }),
           api.get('/dashboard/recent-sales?limit=4'),
-          api.get('/dashboard/sales-overview'),
+          api.get('/dashboard/sales-overview', { params: { range } }),
         ]);
         if (!active) return;
         setStats(s.data);
@@ -57,7 +57,7 @@ export default function Dashboard() {
       }
     })();
     return () => { active = false; };
-  }, []);
+  }, [range, dateFilter]);
 
   if (loading) {
     return (

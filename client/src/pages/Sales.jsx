@@ -38,20 +38,9 @@ export default function Sales() {
         api.get('/customers'),
         api.get('/sales?limit=30'),
       ]);
-      const prods = pRes.data.products || [];
-      setProducts(prods);
+      setProducts(pRes.data.products || []);
       setCustomers(Array.isArray(cRes.data) ? cRes.data : []);
       setSales(sRes.data.sales || []);
-
-      // Pre-populate default cart on first load to mirror UI reference if empty
-      if (cart.length === 0 && prods.length >= 2) {
-        const laptop = prods.find(p => p.name === 'Laptop');
-        const mouse = prods.find(p => p.name === 'Wireless Mouse');
-        const initial = [];
-        if (laptop && laptop.stock > 0) initial.push({ product: laptop._id, name: laptop.name, price: laptop.price, stock: laptop.stock, quantity: 1 });
-        if (mouse && mouse.stock > 0) initial.push({ product: mouse._id, name: mouse.name, price: mouse.price, stock: mouse.stock, quantity: 1 });
-        if (initial.length) setCart(initial);
-      }
     } catch (_) {}
   };
 
@@ -148,7 +137,7 @@ export default function Sales() {
       setCustForm({ name: '', phone: '', email: '', address: '' });
       loadAll();
     } catch (e2) {
-      alert(e2.response?.data?.message || 'Failed to save customer');
+      setMsg({ text: e2.response?.data?.message || 'Failed to save customer', type: 'error' });
     }
   };
 

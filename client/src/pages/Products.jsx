@@ -54,22 +54,19 @@ export default function Products() {
     setLoading(true);
     setErr('');
     try {
-      const effectiveStatus = tab === 'Low Stock' ? 'All Status' : status;
       const { data } = await api.get('/products', {
-        params: { search, category, status: effectiveStatus, page, limit: 5 },
+        params: {
+          search,
+          category,
+          status: tab === 'Low Stock' ? 'All Status' : status,
+          lowStockOnly: tab === 'Low Stock' ? 'true' : undefined,
+          page,
+          limit: 5,
+        },
       });
-      let list = data.products || [];
-      if (tab === 'Low Stock') {
-        const allRes = await api.get('/products', { params: { search, category, limit: 100 } });
-        list = (allRes.data.products || []).filter(p => p.status !== 'In Stock');
-        setProducts(list);
-        setTotal(list.length);
-        setPages(1);
-      } else {
-        setProducts(list);
-        setTotal(data.total || list.length);
-        setPages(data.pages || 1);
-      }
+      setProducts(data.products || []);
+      setTotal(data.total || 0);
+      setPages(data.pages || 1);
     } catch (e) {
       setErr(e.response?.data?.message || 'Failed to load products');
     } finally {
@@ -97,6 +94,7 @@ export default function Products() {
   const handleSaveProduct = async (e) => {
     e.preventDefault();
     setFeedback('');
+    setErr('');
     try {
       const payload = {
         ...form,
@@ -117,13 +115,14 @@ export default function Products() {
       setForm({ name: '', category: 'Electronics', price: '', cost: '', stock: '', lowStockThreshold: 5, sku: '', description: '' });
       fetchProducts();
     } catch (e2) {
-      alert(e2.response?.data?.message || 'Failed to save product');
+      setErr(e2.response?.data?.message || 'Failed to save product');
     }
   };
 
   const handleAdjustStock = async (e) => {
     e.preventDefault();
     if (!adjustTarget) return;
+    setErr('');
     try {
       await api.patch(`/products/${adjustTarget._id}/stock`, {
         delta: Number(adjustDelta),
@@ -134,18 +133,18 @@ export default function Products() {
       fetchProducts();
       fetchMeta();
     } catch (e2) {
-      alert(e2.response?.data?.message || 'Stock adjustment failed');
+      setErr(e2.response?.data?.message || 'Stock adjustment failed');
     }
   };
 
   const handleDelete = async (p) => {
-    if (!window.confirm(`Delete "${p.name}" from inventory?`)) return;
+    setErr('');
     try {
       await api.delete(`/products/${p._id}`);
       setFeedback(`Deleted "${p.name}".`);
       fetchProducts();
     } catch (e2) {
-      alert(e2.response?.data?.message || 'Delete failed');
+      setErr(e2.response?.data?.message || 'Delete failed');
     }
   };
 
@@ -173,6 +172,12 @@ export default function Products() {
         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-4 py-2.5 rounded-xl flex justify-between items-center">
           <span>✓ {feedback}</span>
           <button onClick={() => setFeedback('')} className="text-emerald-600 font-bold">✕</button>
+        </div>
+      )}
+      {err && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-xs px-4 py-2.5 rounded-xl flex justify-between items-center">
+          <span>{err}</span>
+          <button onClick={() => setErr('')} className="text-red-600 font-bold">✕</button>
         </div>
       )}
 
@@ -281,8 +286,6 @@ export default function Products() {
 
             {loading ? (
               <div className="text-center py-10 text-xs text-slate-400">Loading inventory...</div>
-            ) : err ? (
-              <div className="text-red-600 text-xs py-4">{err}</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -446,6 +449,7 @@ export default function Products() {
                 <input
                   type="number"
                   min="0"
+                  step="1"
                   value={form.lowStockThreshold}
                   onChange={e => setForm({ ...form, lowStockThreshold: e.target.value })}
                   className="w-full border rounded-xl px-3 py-2"
@@ -480,6 +484,7 @@ export default function Products() {
                 <input
                   type="number"
                   min="0"
+                  step="1"
                   required
                   value={form.stock}
                   onChange={e => setForm({ ...form, stock: e.target.value })}
@@ -513,6 +518,7 @@ export default function Products() {
               <label className="block text-slate-600 mb-1 font-medium">Quantity Change (+ to restock, - to deduct)</label>
               <input
                 type="number"
+                step="1"
                 required
                 value={adjustDelta}
                 onChange={e => setAdjustDelta(Number(e.target.value))}
