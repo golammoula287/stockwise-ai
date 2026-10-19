@@ -4,6 +4,9 @@ const { protect } = require('../middleware/auth');
 
 const router = express.Router();
 
+// All sales endpoints require authentication (IMP-09)
+router.use(protect);
+
 const PAYMENT_METHOD_MAP = {
   cash: 'cash',
   card: 'card',
@@ -12,11 +15,18 @@ const PAYMENT_METHOD_MAP = {
   other: 'other',
 };
 
+function roundCurrency(value) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
 router.get('/', async (req, res, next) => {
   try {
     const prisma = getPrisma();
-    const { search, limit = 50, page = 1 } = req.query;
+    const { search, customer, limit = 50, page = 1 } = req.query;
     const where = {};
+    if (customer && isValidId(String(customer))) {
+      where.customerId = String(customer);
+    }
     if (search && search.trim()) {
       const term = search.trim();
       where.OR = [
@@ -62,7 +72,7 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-router.post('/', protect, async (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
     const {
       items,
@@ -72,6 +82,8 @@ router.post('/', protect, async (req, res, next) => {
       customerPhone,
       customerEmail,
       discount = 0,
+      tax,
+      taxRate,
       paymentMethod = 'cash',
     } = req.body;
 
@@ -89,6 +101,16 @@ router.post('/', protect, async (req, res, next) => {
       return res.status(400).json({ message: 'Discount must be a non-negative number' });
     }
 
+    if (tax !== undefined && (!Number.isFinite(Number(tax)) || Number(tax) < 0)) {
+      return res.status(400).json({ message: 'Tax must be a non-negative number' });
+    }
+    if (
+      taxRate !== undefined &&
+      (!Number.isFinite(Number(taxRate)) || Number(taxRate) < 0 || Number(taxRate) > 100)
+    ) {
+      return res.status(400).json({ message: 'Tax rate must be between 0 and 100' });
+    }
+
     // Validate and merge duplicate product lines before entering DB transaction
     const mergedItemsMap = new Map();
     for (const item of items) {
@@ -97,7 +119,7 @@ router.post('/', protect, async (req, res, next) => {
         return res.status(400).json({ message: `Invalid product ID: ${pid}` });
       }
       const qty = Number(item.quantity);
-      if (!Number.isInteger(qty) || qty < 1) {
+      if (!Number.isInteger(qty) || qty < 1 || qty > 1_000_000) {
         return res.status(400).json({ message: 'Quantity must be a positive integer (at least 1)' });
       }
       mergedItemsMap.set(pid, (mergedItemsMap.get(pid) || 0) + qty);
@@ -113,7 +135,7 @@ router.post('/', protect, async (req, res, next) => {
 
     const prisma = getPrisma();
 
-    const sale = await prisma.$transaction(async (tx) => {
+    const saleResult = await prisma.$transaction(async (tx) => {
       const deductedByProductId = new Map();
 
       // 1. Atomically verify and deduct stock for each product in deterministic order
@@ -156,12 +178,12 @@ router.post('/', protect, async (req, res, next) => {
       for (const [productId, qty] of mergedItemsMap.entries()) {
         const entry = deductedByProductId.get(productId);
         const p = entry.product;
-        const lineSubtotal = p.price * qty;
-        const unitCost = p.cost || Math.round(p.price * 0.75);
-        const lineCost = unitCost * qty;
-        const lineProfit = lineSubtotal - lineCost;
-        subtotal += lineSubtotal;
-        totalCost += lineCost;
+        const lineSubtotal = roundCurrency(p.price * qty);
+        const unitCost = p.cost !== undefined && p.cost !== null ? p.cost : roundCurrency(p.price * 0.75);
+        const lineCost = roundCurrency(unitCost * qty);
+        const lineProfit = roundCurrency(lineSubtotal - lineCost);
+        subtotal = roundCurrency(subtotal + lineSubtotal);
+        totalCost = roundCurrency(totalCost + lineCost);
 
         saleItemsData.push({
           productId: p.id,
@@ -181,18 +203,35 @@ router.post('/', protect, async (req, res, next) => {
         throw discountErr;
       }
 
-      const cleanDiscount = parsedDiscount;
-      const total = Math.max(subtotal - cleanDiscount, 0);
-      const profit = total - totalCost;
+      const cleanDiscount = roundCurrency(parsedDiscount);
+      const netSubtotal = roundCurrency(Math.max(subtotal - cleanDiscount, 0));
+
+      let computedTax = 0;
+      if (tax !== undefined) {
+        computedTax = roundCurrency(Number(tax));
+      } else if (taxRate !== undefined) {
+        computedTax = roundCurrency(netSubtotal * (Number(taxRate) / 100));
+      }
+
+      const total = roundCurrency(netSubtotal + computedTax);
+      const profit = roundCurrency(netSubtotal - totalCost);
 
       // 2. Resolve or upsert customer inside the same transaction
       let resolvedCustomer = null;
-      let finalCustomerName = customerName && customerName.trim() ? customerName.trim() : 'Walk-in Customer';
-      let finalCustomerPhone = customerPhone && customerPhone.trim() ? customerPhone.trim() : '';
-      let finalCustomerEmail = customerEmail && customerEmail.trim() ? customerEmail.trim() : '';
+      let finalCustomerName =
+        customerName && String(customerName).trim() ? String(customerName).trim() : 'Walk-in Customer';
+      let finalCustomerPhone =
+        customerPhone && String(customerPhone).trim() ? String(customerPhone).trim() : '';
+      let finalCustomerEmail =
+        customerEmail && String(customerEmail).trim() ? String(customerEmail).trim() : '';
 
       if (targetCustomerId) {
         resolvedCustomer = await tx.customer.findUnique({ where: { id: String(targetCustomerId) } });
+        if (!resolvedCustomer) {
+          const custErr = new Error('Selected customer not found');
+          custErr.statusCode = 404;
+          throw custErr;
+        }
       } else if (finalCustomerPhone) {
         resolvedCustomer = await tx.customer.findFirst({ where: { phone: finalCustomerPhone } });
       }
@@ -278,10 +317,10 @@ router.post('/', protect, async (req, res, next) => {
         });
       }
 
-      return createdSale;
+      return { ...createdSale, tax: computedTax };
     });
 
-    res.status(201).json(sale);
+    res.status(201).json(saleResult);
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ message: err.message });

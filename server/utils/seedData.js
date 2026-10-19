@@ -8,7 +8,7 @@ async function seedDatabase({ force = false } = {}) {
     const existingUsers = await prisma.user.count();
     if (existingUsers > 0) return { seeded: false };
   } else {
-    // Delete in foreign-key dependency order
+    // Delete in foreign-key dependency order (only used in isolated test DB)
     await prisma.saleItem.deleteMany({});
     await prisma.stockLog.deleteMany({});
     await prisma.sale.deleteMany({});
@@ -30,7 +30,7 @@ async function seedDatabase({ force = false } = {}) {
       password: hashedPassword,
       role: 'admin',
       phone: '01712345678',
-      businessName: 'StockPro',
+      businessName: 'StockWise AI',
     },
   });
 
@@ -42,7 +42,7 @@ async function seedDatabase({ force = false } = {}) {
         password: hashedPassword,
         role: 'admin',
         phone: '01712345678',
-        businessName: 'StockPro',
+        businessName: 'StockWise AI',
       },
     });
   }
@@ -50,7 +50,7 @@ async function seedDatabase({ force = false } = {}) {
   await prisma.setting.create({
     data: {
       userId: admin.id,
-      businessName: 'StockPro',
+      businessName: 'StockWise AI',
       currency: '৳',
       taxRate: 0,
       lowStockThresholdDefault: 5,
@@ -59,7 +59,7 @@ async function seedDatabase({ force = false } = {}) {
       businessAddress: 'Banani, Dhaka, Bangladesh',
       preferences: {
         lowStockAlerts: true,
-        emailReports: true,
+        emailReports: false,
         autoReorderSuggestions: true,
         dateFormat: 'MMM DD, YYYY',
       },
@@ -102,10 +102,10 @@ async function seedDatabase({ force = false } = {}) {
   });
 
   const customerSeedRows = [
-    { name: 'Rahim Uddin', phone: '01711111111', email: 'rahim@example.com', address: 'Dhanmondi, Dhaka', totalSpent: 81200, totalOrders: 2 },
-    { name: 'Ayesha Khan', phone: '01722222222', email: 'ayesha@example.com', address: 'Gulshan, Dhaka', totalSpent: 22500, totalOrders: 2 },
-    { name: 'Tarek Islam', phone: '01733333333', email: 'tarek@example.com', address: 'Uttara, Dhaka', totalSpent: 17800, totalOrders: 2 },
-    { name: 'Nusrat Jahan', phone: '01744444444', email: 'nusrat@example.com', address: 'Mirpur, Dhaka', totalSpent: 21650, totalOrders: 2 },
+    { name: 'Rahim Uddin', phone: '01711111111', email: 'rahim@example.com', address: 'Dhanmondi, Dhaka', totalSpent: 0, totalOrders: 0 },
+    { name: 'Ayesha Khan', phone: '01722222222', email: 'ayesha@example.com', address: 'Gulshan, Dhaka', totalSpent: 0, totalOrders: 0 },
+    { name: 'Tarek Islam', phone: '01733333333', email: 'tarek@example.com', address: 'Uttara, Dhaka', totalSpent: 0, totalOrders: 0 },
+    { name: 'Nusrat Jahan', phone: '01744444444', email: 'nusrat@example.com', address: 'Mirpur, Dhaka', totalSpent: 0, totalOrders: 0 },
   ];
 
   const customers = [];
@@ -216,14 +216,30 @@ async function seedDatabase({ force = false } = {}) {
     }),
     buildSaleData({
       invoiceNumber: 'INV-1009',
-      customer: customers[0],
-      items: [{ name: 'USB Cable', quantity: 1, overridePrice: 1200 }],
+      customer: customers[3],
+      items: [{ name: 'Monitor', quantity: 1 }],
       date: new Date(now.getTime() - 6 * 60 * 60 * 1000),
     }),
   ];
 
   for (const saleData of historicalSales) {
     await prisma.sale.create({ data: saleData });
+  }
+
+  // Compute exact customer totalOrders and totalSpent from actual created sales
+  for (const c of customers) {
+    const agg = await prisma.sale.aggregate({
+      where: { customerId: c.id },
+      _count: { _all: true },
+      _sum: { total: true },
+    });
+    await prisma.customer.update({
+      where: { id: c.id },
+      data: {
+        totalOrders: agg._count._all || 0,
+        totalSpent: agg._sum.total || 0,
+      },
+    });
   }
 
   await prisma.counter.upsert({
