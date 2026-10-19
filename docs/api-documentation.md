@@ -1,64 +1,67 @@
 # API Documentation
 
 Base URL: `http://localhost:5000/api`  
-Protected endpoints require header: `Authorization: Bearer <JWT>`  
-Resource identifiers use standard UUID v4 format (`id` and `_id` alias).
+**Authentication:** All endpoints except `GET /`, `GET /api/health`, and `POST /api/auth/login` require header:  
+`Authorization: Bearer <JWT>`  
+Missing, malformed, invalid, or expired tokens return `401 Unauthorized`. Admin-only endpoints return `403 Forbidden` for non-admin roles.
 
 ---
 
-## 1. Health
+## 1. Public Health Endpoints
 - **`GET /api/health`** → `200 OK` `{ "ok": true, "database": "postgresql", "uptime": 12.3, "timestamp": "..." }`
 
 ## 2. Authentication (`/api/auth`)
-- **`POST /api/auth/login`**
+- **`POST /api/auth/login`** (Rate-limited: max 15 attempts / 15 min per IP)
   - Body: `{ "email": "admin@stockwise.com", "password": "..." }`
   - Returns `200 OK` `{ "token": "<JWT>", "user": { "id", "name", "email", "role", "phone", "businessName" } }`
-  - Errors: `400` validation failure, `401` invalid email or password
+  - Errors: `400` validation failure, `401` invalid credentials, `429` rate limit exceeded
 - **`GET /api/auth/me`** (Protected) → `200 OK` current user profile
-- **`POST /api/auth/register`** (Admin only) → `201 Created` `{ "id", "name", "email", "role" }`
+- **`POST /api/auth/register`** (Protected, Admin only) → `201 Created` `{ "id", "name", "email", "role" }`
 
-## 3. Products & Inventory (`/api/products`)
-- **`GET /api/products?search=&category=&status=&lowStockOnly=&page=1&limit=10`**
+## 3. Products & Inventory (`/api/products` — All Protected)
+- **`GET /api/products?search=&category=&status=&lowStockOnly=&sortBy=&page=1&limit=10`** (Protected)
   - Returns `{ "products": [...], "total": 10, "page": 1, "pages": 1 }`
-- **`GET /api/products/categories`** → Category counts, stock totals, inventory value, low-stock counts
-- **`GET /api/products/stock-history?limit=50`** → `StockLog` audit entries (`initial`, `sale`, `restock`, `adjustment`)
-- **`POST /api/products`** (Admin) → Creates product + initial `StockLog` (`name`, `category`, `price >= 0`, integer `stock >= 0`)
-- **`PUT /api/products/:id`** (Admin) → Updates product fields; logs stock diff if `stock` changed
-- **`PATCH /api/products/:id/stock`** (Admin)
+- **`GET /api/products/categories`** (Protected) → Category counts, stock totals, inventory value, low-stock counts
+- **`GET /api/products/stock-history?limit=50&productId=&type=`** (Protected) → `StockLog` audit entries (`initial`, `sale`, `restock`, `adjustment`)
+- **`GET /api/products/:id`** (Protected) → Single product by UUID
+- **`POST /api/products`** (Protected, Admin only) → Creates product with unique `sku` + initial `StockLog`; returns `400` on duplicate SKU or negative price/cost/stock
+- **`PUT /api/products/:id`** (Protected, Admin only) → Updates product fields and validates SKU uniqueness; logs stock diff if `stock` changed
+- **`PATCH /api/products/:id/stock`** (Protected, Admin only)
   - Body: `{ "delta": 10, "note": "Restock shipment" }` (`delta` must be a non-zero integer)
-  - Atomically increments/decrements stock in PostgreSQL and writes a `StockLog` entry; returns `400` if resulting stock would be negative
-- **`DELETE /api/products/:id`** (Admin) → Deletes product if it has no `SaleItem` history; returns `400` if referenced by existing sales
+  - Atomically updates stock in PostgreSQL and writes a normalized `StockLog` entry; returns `400` if resulting stock would be negative (and writes no log on failure)
+- **`DELETE /api/products/:id`** (Protected, Admin only) → Deletes product if it has no `SaleItem` history; returns `400` if referenced by existing sales
 
-## 4. Customers (`/api/customers`)
-- **`GET /api/customers?search=`** → List of customers with `totalSpent` and `totalOrders`
-- **`GET /api/customers/:id`** → `{ "customer": {...}, "purchaseHistory": [...] }`
+## 4. Customers (`/api/customers` — All Protected)
+- **`GET /api/customers?search=`** (Protected) → List of customers with reconciled `totalSpent` and `totalOrders`
+- **`GET /api/customers/:id`** (Protected) → `{ "customer": {...}, "purchaseHistory": [...] }`
 - **`POST /api/customers`** (Protected) → `{ "name", "phone", "email?", "address?" }`
 - **`PUT /api/customers/:id`** (Protected) → Updates customer details
+- **`DELETE /api/customers/:id`** (Protected, Admin only) → Deletes customer record
 
-## 5. Sales (`/api/sales`)
-- **`GET /api/sales?page=1&limit=15&search=`** → Paginated sales history including `items` (`SaleItem[]`)
-- **`GET /api/sales/:id`** → Single sale including `items`
+## 5. Sales (`/api/sales` — All Protected)
+- **`GET /api/sales?page=1&limit=15&search=&customer=`** (Protected) → Paginated sales history including `items` (`SaleItem[]`)
+- **`GET /api/sales/:id`** (Protected) → Single sale including `items`
 - **`POST /api/sales`** (Protected — PostgreSQL ACID Transaction)
-  - Body: `{ "customer"?: "<UUID>", "customerName"?: "...", "customerPhone"?: "...", "items": [{ "product": "<UUID>", "quantity": 2 }], "discount": 0, "paymentMethod": "cash" }`
-  - Behavior: Consolidates duplicate product UUIDs, verifies integer quantities and `discount <= subtotal`, atomically deducts stock in PostgreSQL, increments `Counter` for a unique `invoiceNumber` (`INV-XXXX`), updates customer totals, creates `Sale` + `SaleItem` rows, and records `StockLog` entries inside `prisma.$transaction`.
-  - Errors: `400` invalid quantity/discount/paymentMethod or insufficient stock (rolls back entire transaction), `404` product not found.
+  - Body: `{ "customer"?: "<UUID>", "customerName"?: "...", "customerPhone"?: "...", "items": [{ "product": "<UUID>", "quantity": 2 }], "discount": 0, "taxRate"?: 5, "paymentMethod": "cash" }`
+  - Behavior: Consolidates duplicate product UUIDs, verifies integer quantities and `discount <= subtotal`, atomically deducts stock in PostgreSQL, computes tax and profit, increments `Counter` (`INV-XXXX`), updates customer totals, creates `Sale` + `SaleItem` rows, and records `StockLog` entries inside `prisma.$transaction`.
+  - Errors: `400` invalid quantity/discount/paymentMethod or insufficient stock (rolls back entire transaction), `404` product/customer not found.
 
-## 6. Dashboard (`/api/dashboard`)
-- **`GET /api/dashboard/stats`** (Protected) → KPI counts, revenue, profit, percentage changes, and low-stock notifications
-- **`GET /api/dashboard/recent-sales?limit=5`** (Protected) → Recent transactions
-- **`GET /api/dashboard/sales-overview`** (Protected) → Monthly sales & profit series
-- **`GET /api/dashboard/notifications`** (Protected) → Active low-stock and out-of-stock alerts
+## 6. Dashboard (`/api/dashboard` — All Protected)
+- **`GET /api/dashboard/stats?dateFilter=This%20Month`** (Protected) → Period-filtered KPI counts, revenue, profit, real period-over-period percentage changes, and low-stock notifications
+- **`GET /api/dashboard/recent-sales?limit=5&dateFilter=`** (Protected) → Recent transactions
+- **`GET /api/dashboard/sales-overview?range=This%20Year`** (Protected) → Actual PostgreSQL sales & profit series (`This Year` 12 monthly buckets or `This Month` 10 3-day buckets)
+- **`GET /api/dashboard/notifications`** (Protected) → Active low-stock alerts (respects `preferences.lowStockAlerts`)
 
-## 7. AI/ML Insights (`/api/ai/insights`)
+## 7. AI/ML Insights (`/api/ai/insights` — Protected)
 - **`GET /api/ai/insights`** (Protected)
   - Returns:
-    - `summary`: Dynamic narrative built from live PostgreSQL metrics and forecasts
-    - `recommendations`: Reorder suggestions with `forecast14d`, `safetyStock`, `stockoutProbability` (`1..99`), `trendSlope`, `priority`, and `explainability`
+    - `summary`: Dynamic narrative distinguishing `thresholdAlertCount` and `forecastReorderCount`
+    - `recommendations`: Reorder suggestions with `triggerType` (`threshold` | `forecast`), `forecast14d`, `forecast14dContinuous`, `leadTimeDays` (`7`), `leadTimeDemand`, `safetyStock`, `reorderPoint`, `stockoutProbability` (`1..99`), `suggested`, and `explainability`
     - `topProducts`: Top selling products over trailing 30 days
     - `slowMoving`: In-stock products with zero 30-day velocity and tied-up capital
-    - `modelEvaluation`: `{ "methodology", "baselineMethod", "horizonDays": 14, "windowDays": 30, "maeModel", "rmseModel", "maeBaseline", "evaluatedProducts" }`
+    - `modelEvaluation`: Walk-forward `maeModel`, `rmseModel`, `maeBaseline` (7-day SMA), `evaluatedProducts`, and `assumptionsAndLimitations`
 
-## 8. Settings (`/api/settings`)
-- **`GET /api/settings`** (Protected) → Profile, business config, and preferences
-- **`PUT /api/settings`** (Protected) → Updates profile, business config, and preferences
-- **`PUT /api/settings/password`** (Protected) → `{ "currentPassword", "newPassword" }` (min 6 chars)
+## 8. Settings (`/api/settings` — All Protected)
+- **`GET /api/settings`** (Protected) → Profile, business config, preferences, and SMTP capability status
+- **`PUT /api/settings`** (Protected) → Updates profile (with unique email check), business config, and preferences
+- **`PUT /api/settings/password`** (Protected) → `{ "currentPassword", "newPassword" }` (verifies current password, hashes new password, and returns a refreshed JWT `token`)
