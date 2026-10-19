@@ -1,5 +1,4 @@
-const Product = require('../models/Product');
-const Sale = require('../models/Sale');
+const { getPrisma } = require('../config/db');
 
 /**
  * Standard Normal CDF approximation (Abramowitz & Stegun 7.1.26)
@@ -100,9 +99,10 @@ function fitHoltDemandModel(dailySeries, horizonDays = 14) {
 }
 
 /**
- * Generates AI/ML inventory & sales insights from live MongoDB collections.
+ * Generates AI/ML inventory & sales insights from live PostgreSQL tables via Prisma.
  */
 async function generateInsights() {
+  const prisma = getPrisma();
   const now = new Date();
   const startThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -111,10 +111,13 @@ async function generateInsights() {
   const startWindow = new Date(now.getTime() - DAYS_WINDOW * 24 * 60 * 60 * 1000);
 
   const [products, salesThisMonth, salesLastMonth, sales30Days] = await Promise.all([
-    Product.find().lean(),
-    Sale.find({ createdAt: { $gte: startThisMonth } }).lean(),
-    Sale.find({ createdAt: { $gte: startLastMonth, $lte: endLastMonth } }).lean(),
-    Sale.find({ createdAt: { $gte: startWindow } }).lean(),
+    prisma.product.findMany(),
+    prisma.sale.findMany({ where: { createdAt: { gte: startThisMonth } } }),
+    prisma.sale.findMany({ where: { createdAt: { gte: startLastMonth, lte: endLastMonth } } }),
+    prisma.sale.findMany({
+      where: { createdAt: { gte: startWindow } },
+      include: { items: true },
+    }),
   ]);
 
   const revenueThisMonth = salesThisMonth.reduce((s, x) => s + (x.total || 0), 0);
@@ -128,7 +131,7 @@ async function generateInsights() {
   // Build 30-day chronological daily demand vectors per product
   const dailyBucketsByProduct = {};
   products.forEach(p => {
-    dailyBucketsByProduct[String(p._id)] = new Array(DAYS_WINDOW).fill(0);
+    dailyBucketsByProduct[String(p.id)] = new Array(DAYS_WINDOW).fill(0);
   });
 
   const salesByProduct = {};
@@ -143,9 +146,9 @@ async function generateInsights() {
     );
 
     (sale.items || []).forEach(it => {
-      const id = String(it.product);
+      const id = String(it.productId || it.product);
       const qty = it.quantity || 0;
-      const rev = it.subtotal || (it.price || 0) * qty;
+      const rev = it.subtotal || (it.unitPrice || it.price || 0) * qty;
 
       salesByProduct[id] = (salesByProduct[id] || 0) + qty;
       revenueByProduct[id] = (revenueByProduct[id] || 0) + rev;
@@ -164,7 +167,7 @@ async function generateInsights() {
     });
   });
 
-  const productMap = Object.fromEntries(products.map(p => [String(p._id), p]));
+  const productMap = Object.fromEntries(products.map(p => [String(p.id), p]));
   const maxSold = Math.max(...Object.values(salesByProduct), 1);
 
   const topProducts = Object.entries(salesByProduct)
@@ -185,7 +188,7 @@ async function generateInsights() {
 
   // Train Holt linear time-series model across all products and evaluate vs 7-day SMA baseline
   const productForecasts = products.map(p => {
-    const id = String(p._id);
+    const id = String(p.id);
     const series = dailyBucketsByProduct[id] || new Array(DAYS_WINDOW).fill(0);
     const sold30 = salesByProduct[id] || 0;
     const avgDaily = sold30 / DAYS_WINDOW;
@@ -228,7 +231,7 @@ async function generateInsights() {
     (evalSet.reduce((s, f) => s + f.ml.rmseModel, 0) / Math.max(evalSet.length, 1)).toFixed(3)
   );
 
-  // Filter products requiring reorder (low stock OR high ML stockout risk >= 65%)
+  // Filter products requiring reorder (low stock OR high ML stockout risk >= 70%)
   const lowStockProducts = products.filter(p => p.stock <= (p.lowStockThreshold ?? 5));
   const recommendationCandidates = productForecasts.filter(
     f => f.product.stock <= f.threshold || f.stockoutProbability >= 70
@@ -245,7 +248,7 @@ async function generateInsights() {
       const unitCost = p.cost || Math.round((p.price || 0) * 0.75);
 
       return {
-        productId: p._id,
+        productId: p.id,
         product: p.name,
         category: p.category,
         stock: p.stock,
@@ -275,11 +278,11 @@ async function generateInsights() {
   // Identify slow-moving products (in stock, 0 sales in last 30 days)
   const soldIds = new Set(Object.keys(salesByProduct));
   const slowMoving = products
-    .filter(p => !soldIds.has(String(p._id)) && p.stock > 0)
+    .filter(p => !soldIds.has(String(p.id)) && p.stock > 0)
     .map(p => {
       const unitCost = p.cost || Math.round((p.price || 0) * 0.75);
       return {
-        productId: p._id,
+        productId: p.id,
         product: p.name,
         category: p.category,
         stock: p.stock,

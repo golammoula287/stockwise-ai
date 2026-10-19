@@ -1,12 +1,12 @@
 const express = require('express');
-const Product = require('../models/Product');
-const Sale = require('../models/Sale');
+const { getPrisma } = require('../config/db');
 const { protect } = require('../middleware/auth');
 
 const router = express.Router();
 
 router.get('/stats', protect, async (req, res, next) => {
   try {
+    const prisma = getPrisma();
     const now = new Date();
     const startThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -21,32 +21,32 @@ router.get('/stats', protect, async (req, res, next) => {
       revenueAggLast,
       revenueAggAll,
     ] = await Promise.all([
-      Product.find().lean(),
-      Sale.countDocuments(),
-      Sale.countDocuments({ createdAt: { $gte: startThisMonth } }),
-      Sale.countDocuments({ createdAt: { $gte: startLastMonth, $lte: endLastMonth } }),
-      Sale.aggregate([
-        { $match: { createdAt: { $gte: startThisMonth } } },
-        { $group: { _id: null, revenue: { $sum: '$total' }, profit: { $sum: '$profit' } } },
-      ]),
-      Sale.aggregate([
-        { $match: { createdAt: { $gte: startLastMonth, $lte: endLastMonth } } },
-        { $group: { _id: null, revenue: { $sum: '$total' }, profit: { $sum: '$profit' } } },
-      ]),
-      Sale.aggregate([
-        { $group: { _id: null, revenue: { $sum: '$total' }, profit: { $sum: '$profit' } } },
-      ]),
+      prisma.product.findMany(),
+      prisma.sale.count(),
+      prisma.sale.count({ where: { createdAt: { gte: startThisMonth } } }),
+      prisma.sale.count({ where: { createdAt: { gte: startLastMonth, lte: endLastMonth } } }),
+      prisma.sale.aggregate({
+        where: { createdAt: { gte: startThisMonth } },
+        _sum: { total: true, profit: true },
+      }),
+      prisma.sale.aggregate({
+        where: { createdAt: { gte: startLastMonth, lte: endLastMonth } },
+        _sum: { total: true, profit: true },
+      }),
+      prisma.sale.aggregate({
+        _sum: { total: true, profit: true },
+      }),
     ]);
 
     const totalProducts = products.length;
     const lowStockProducts = products.filter(p => p.stock <= (p.lowStockThreshold ?? 5));
     const outOfStockProducts = products.filter(p => p.stock === 0);
 
-    const thisMonthRevenue = revenueAggThis[0]?.revenue || 0;
-    const lastMonthRevenue = revenueAggLast[0]?.revenue || 0;
-    const allTimeRevenue = revenueAggAll[0]?.revenue || 0;
-    const thisMonthProfit = revenueAggThis[0]?.profit || 0;
-    const allTimeProfit = revenueAggAll[0]?.profit || 0;
+    const thisMonthRevenue = revenueAggThis._sum.total || 0;
+    const lastMonthRevenue = revenueAggLast._sum.total || 0;
+    const allTimeRevenue = revenueAggAll._sum.total || 0;
+    const thisMonthProfit = revenueAggThis._sum.profit || 0;
+    const allTimeProfit = revenueAggAll._sum.profit || 0;
 
     const totalRevenue = thisMonthRevenue > 0 ? thisMonthRevenue : allTimeRevenue;
     const totalProfit = thisMonthProfit > 0 ? thisMonthProfit : allTimeProfit;
@@ -59,7 +59,7 @@ router.get('/stats', protect, async (req, res, next) => {
       : 8;
 
     const notifications = lowStockProducts.map(p => ({
-      id: p._id,
+      id: p.id,
       product: p.name,
       category: p.category,
       stock: p.stock,
@@ -93,14 +93,19 @@ router.get('/stats', protect, async (req, res, next) => {
 
 router.get('/recent-sales', protect, async (req, res, next) => {
   try {
+    const prisma = getPrisma();
     const limit = Math.min(parseInt(req.query.limit || '5', 10), 25);
-    const sales = await Sale.find()
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .populate('customer', 'name phone');
+    const sales = await prisma.sale.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: {
+        items: true,
+        customer: { select: { name: true, phone: true } },
+      },
+    });
 
     const mapped = sales.map(s => ({
-      id: s._id,
+      id: s.id,
       invoiceNumber: s.invoiceNumber,
       customer: s.customer?.name || s.customerName || 'Walk-in Customer',
       amount: s.total,
@@ -117,26 +122,30 @@ router.get('/recent-sales', protect, async (req, res, next) => {
 
 router.get('/sales-overview', protect, async (req, res, next) => {
   try {
+    const prisma = getPrisma();
     const year = new Date().getFullYear();
-    const agg = await Sale.aggregate([
-      { $match: { createdAt: { $gte: new Date(year, 0, 1) } } },
-      {
-        $group: {
-          _id: { $month: '$createdAt' },
-          total: { $sum: '$total' },
-          profit: { $sum: '$profit' },
-          orders: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
+    const yearSales = await prisma.sale.findMany({
+      where: { createdAt: { gte: new Date(year, 0, 1) } },
+      select: { createdAt: true, total: true, profit: true },
+    });
+
+    const byMonth = {};
+    for (const s of yearSales) {
+      const m = new Date(s.createdAt).getMonth() + 1;
+      if (!byMonth[m]) {
+        byMonth[m] = { total: 0, profit: 0, orders: 0 };
+      }
+      byMonth[m].total += s.total || 0;
+      byMonth[m].profit += s.profit || 0;
+      byMonth[m].orders += 1;
+    }
 
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
     const baseline = [5000, 14000, 11000, 18000, 16000, 22000, 26000, 36000, 32000, 48000];
 
     const data = months.map((m, idx) => {
       const monthNum = idx + 1;
-      const found = agg.find(a => a._id === monthNum);
+      const found = byMonth[monthNum];
       const salesValue = found && found.total > 0 ? found.total : baseline[idx];
       return {
         month: m,
@@ -154,11 +163,12 @@ router.get('/sales-overview', protect, async (req, res, next) => {
 
 router.get('/notifications', protect, async (req, res, next) => {
   try {
-    const products = await Product.find().lean();
+    const prisma = getPrisma();
+    const products = await prisma.product.findMany();
     const lowStock = products
       .filter(p => p.stock <= (p.lowStockThreshold ?? 5))
       .map(p => ({
-        id: p._id,
+        id: p.id,
         product: p.name,
         category: p.category,
         stock: p.stock,
