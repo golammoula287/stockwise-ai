@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../lib/api';
+import {
+  formatCount,
+  formatUnits,
+  formatItems,
+  formatCurrency,
+  formatDateTimeBD,
+} from '../lib/formatters';
 
 export default function Sales() {
   const location = useLocation();
@@ -22,13 +29,14 @@ export default function Sales() {
   const [submittingSale, setSubmittingSale] = useState(false);
   const [msg, setMsg] = useState({ text: '', type: '' });
 
-  // Customer Management State
+  // Customer & Invoice Modal State
   const [custSearch, setCustSearch] = useState('');
   const [showCustModal, setShowCustModal] = useState(false);
   const [custModalOrigin, setCustModalOrigin] = useState('customers');
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [custForm, setCustForm] = useState({ name: '', phone: '', email: '', address: '' });
   const [historyModal, setHistoryModal] = useState(null);
+  const [invoiceModal, setInvoiceModal] = useState(null);
 
   useEffect(() => {
     if (location.pathname === '/customers') setTab('Customers');
@@ -90,7 +98,10 @@ export default function Sales() {
       const existing = prev.find(x => x.product === p._id);
       if (existing) {
         if (existing.quantity + 1 > p.stock) {
-          setMsg({ text: `Only ${p.stock} units of ${p.name} available in stock.`, type: 'error' });
+          setMsg({
+            text: `Only ${formatUnits(p.stock)} of ${p.name} available in stock.`,
+            type: 'error',
+          });
           return prev;
         }
         return prev.map(x => (x.product === p._id ? { ...x, quantity: x.quantity + 1 } : x));
@@ -113,11 +124,11 @@ export default function Sales() {
     );
   };
 
-  const subtotal = cart.reduce((s, x) => s + x.price * x.quantity, 0);
-  const cleanDiscount = Math.max(Number(discount) || 0, 0);
-  const netAfterDiscount = Math.max(subtotal - cleanDiscount, 0);
-  const taxAmount = Math.round(netAfterDiscount * ((businessConfig.taxRate || 0) / 100) * 100) / 100;
-  const total = Math.round((netAfterDiscount + taxAmount) * 100) / 100;
+  const subtotal = Math.round(cart.reduce((s, x) => s + x.price * x.quantity, 0) * 100) / 100;
+  const cleanDiscount = Math.round(Math.max(Number(discount) || 0, 0) * 100) / 100;
+  const taxableAmount = Math.round(Math.max(subtotal - cleanDiscount, 0) * 100) / 100;
+  const taxAmount = Math.round(taxableAmount * (Number(businessConfig.taxRate || 0) / 100) * 100) / 100;
+  const total = Math.round((taxableAmount + taxAmount) * 100) / 100;
 
   const completeSale = async () => {
     if (submittingSale) return;
@@ -144,7 +155,7 @@ export default function Sales() {
       };
       const { data } = await api.post('/sales', payload);
       setMsg({
-        text: `Sale ${data.invoiceNumber} completed for ${data.customerName || 'Walk-in Customer'}! Total: ${businessConfig.currency} ${Number(data.total).toLocaleString()}`,
+        text: `Sale ${data.invoiceNumber} completed for ${data.customerName || 'Walk-in Customer'}! Total: ${formatCurrency(data.total, businessConfig.currency)}`,
         type: 'success',
       });
       // Reset cart, discount, AND customer selection so subsequent sales start as Walk-in Customer (fixes IMP-04)
@@ -189,6 +200,20 @@ export default function Sales() {
       const { data } = await api.get(`/customers/${custId}`);
       setHistoryModal(data);
     } catch (_) {}
+  };
+
+  const renderPersistedTaxBadge = (sale) => {
+    if (sale.taxAmount === null || sale.taxAmount === undefined) {
+      return <span className="text-slate-400 text-[11px]" title="Pre-migration legacy invoice (tax rate not recorded)">Legacy (—)</span>;
+    }
+    const amt = formatCurrency(sale.taxAmount, businessConfig.currency);
+    const rate = sale.taxRate !== null && sale.taxRate !== undefined ? ` (${sale.taxRate}%)` : '';
+    return (
+      <span className="text-slate-700 font-medium">
+        {amt}
+        <span className="text-slate-400 text-[11px]">{rate}</span>
+      </span>
+    );
   };
 
   const filteredProducts = products.filter(
@@ -240,6 +265,7 @@ export default function Sales() {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search products or SKU..."
+                aria-label="Search products or SKU"
                 className="w-full border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs outline-none focus:border-blue-500"
               />
             </div>
@@ -262,10 +288,10 @@ export default function Sales() {
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-bold text-slate-800 truncate">{p.name}</div>
                     <div className="text-xs font-semibold text-slate-700">
-                      {businessConfig.currency} {Number(p.price).toLocaleString()}
+                      {formatCurrency(p.price, businessConfig.currency)}
                     </div>
                     <div className={`text-[11px] ${p.stock === 0 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
-                      Stock: {p.stock} {p.sku ? `· ${p.sku}` : ''}
+                      Stock: {formatUnits(p.stock)} {p.sku ? `· ${p.sku}` : ''}
                     </div>
                   </div>
                   <button
@@ -287,7 +313,7 @@ export default function Sales() {
           <div className="lg:col-span-5 bg-white border border-slate-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between border-b pb-3">
-                <h2 className="font-bold text-sm text-slate-900">Cart ({cart.length} items)</h2>
+                <h2 className="font-bold text-sm text-slate-900">Cart ({formatItems(cart.length)})</h2>
                 <button
                   onClick={() => {
                     setCart([]);
@@ -309,13 +335,14 @@ export default function Sales() {
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-bold text-slate-800 truncate">{c.name}</div>
                       <div className="text-[11px] text-slate-500">
-                        {businessConfig.currency} {Number(c.price).toLocaleString()}
+                        {formatCurrency(c.price, businessConfig.currency)}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => updateQty(c.product, -1)}
                         className="w-6 h-6 border rounded-md text-xs hover:bg-slate-50"
+                        aria-label={`Decrease quantity of ${c.name}`}
                       >
                         -
                       </button>
@@ -323,12 +350,13 @@ export default function Sales() {
                       <button
                         onClick={() => updateQty(c.product, 1)}
                         className="w-6 h-6 border rounded-md text-xs hover:bg-slate-50"
+                        aria-label={`Increase quantity of ${c.name}`}
                       >
                         +
                       </button>
                     </div>
-                    <div className="text-xs font-bold text-slate-900 w-20 text-right">
-                      {businessConfig.currency} {(c.price * c.quantity).toLocaleString()}
+                    <div className="text-xs font-bold text-slate-900 w-24 text-right">
+                      {formatCurrency(c.price * c.quantity, businessConfig.currency)}
                     </div>
                   </div>
                 ))}
@@ -344,12 +372,13 @@ export default function Sales() {
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal</span>
                 <span className="font-semibold text-slate-800">
-                  {businessConfig.currency} {subtotal.toLocaleString()}
+                  {formatCurrency(subtotal, businessConfig.currency)}
                 </span>
               </div>
               <div className="flex justify-between items-center text-slate-600">
-                <span>Discount</span>
+                <label htmlFor="pos-discount-input">Discount</label>
                 <input
+                  id="pos-discount-input"
                   type="number"
                   min="0"
                   max={subtotal}
@@ -358,17 +387,16 @@ export default function Sales() {
                   className="w-24 text-right border rounded-lg px-2 py-1 text-xs outline-none"
                 />
               </div>
-              {businessConfig.taxRate > 0 && (
-                <div className="flex justify-between text-slate-600">
-                  <span>Tax ({businessConfig.taxRate}%)</span>
-                  <span className="font-medium text-slate-700">
-                    {businessConfig.currency} {taxAmount.toLocaleString()}
-                  </span>
-                </div>
-              )}
+              <div className="flex justify-between text-slate-600">
+                <span>Tax ({businessConfig.taxRate || 0}%)</span>
+                <span className="font-medium text-slate-700">
+                  {formatCurrency(taxAmount, businessConfig.currency)}
+                </span>
+              </div>
               <div className="flex justify-between items-center text-slate-600">
-                <span>Payment Method</span>
+                <label htmlFor="pos-payment-method">Payment Method</label>
                 <select
+                  id="pos-payment-method"
                   value={paymentMethod}
                   onChange={e => setPaymentMethod(e.target.value)}
                   className="border rounded-lg px-2 py-1 text-xs bg-white outline-none"
@@ -381,9 +409,7 @@ export default function Sales() {
               </div>
               <div className="flex justify-between items-center text-sm font-extrabold text-slate-900 pt-2 border-t">
                 <span>Total</span>
-                <span>
-                  {businessConfig.currency} {total.toLocaleString()}
-                </span>
+                <span>{formatCurrency(total, businessConfig.currency)}</span>
               </div>
 
               <button
@@ -447,6 +473,7 @@ export default function Sales() {
                 setCustomerName(e.target.value);
               }}
               placeholder="Customer Name (or leave blank for Walk-in)"
+              aria-label="Customer Name"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 outline-none"
             />
             <input
@@ -456,12 +483,14 @@ export default function Sales() {
                 setCustomerPhone(e.target.value);
               }}
               placeholder="Phone Number"
+              aria-label="Customer Phone Number"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 outline-none"
             />
             <input
               value={customerEmail}
               onChange={e => setCustomerEmail(e.target.value)}
               placeholder="Email (Optional)"
+              aria-label="Customer Email"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 outline-none"
             />
 
@@ -484,7 +513,14 @@ export default function Sales() {
       {/* TAB 2: SALES HISTORY */}
       {tab === 'Sales History' && (
         <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
-          <h2 className="font-bold text-base text-slate-900 mb-3">Sales Transactions History</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 className="font-bold text-base text-slate-900">Sales Transactions History</h2>
+              <p className="text-xs text-slate-500">
+                Historical invoices retain the exact tax rate and tax amount snapshot applied at checkout.
+              </p>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -493,6 +529,9 @@ export default function Sales() {
                   <th className="text-left py-2.5">Customer</th>
                   <th className="text-left py-2.5">Items</th>
                   <th className="text-center py-2.5">Method</th>
+                  <th className="text-right py-2.5">Subtotal</th>
+                  <th className="text-right py-2.5">Discount</th>
+                  <th className="text-right py-2.5">Tax Snapshot</th>
                   <th className="text-right py-2.5">Total</th>
                   <th className="text-right py-2.5">Profit</th>
                   <th className="text-right py-2.5">Date</th>
@@ -501,7 +540,15 @@ export default function Sales() {
               <tbody className="divide-y divide-slate-100">
                 {sales.map(s => (
                   <tr key={s._id} className="hover:bg-slate-50">
-                    <td className="py-3 font-semibold text-blue-600">{s.invoiceNumber || 'INV'}</td>
+                    <td className="py-3 font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setInvoiceModal(s)}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {s.invoiceNumber || 'INV'}
+                      </button>
+                    </td>
                     <td className="py-3 font-medium text-slate-800">
                       {s.customer?.name || s.customerName || 'Walk-in Customer'}
                     </td>
@@ -509,13 +556,20 @@ export default function Sales() {
                       {(s.items || []).map(i => `${i.name} ×${i.quantity}`).join(', ')}
                     </td>
                     <td className="py-3 text-center capitalize text-slate-500">{s.paymentMethod || 'cash'}</td>
+                    <td className="py-3 text-right text-slate-700">
+                      {formatCurrency(s.subtotal, businessConfig.currency)}
+                    </td>
+                    <td className="py-3 text-right text-slate-500">
+                      {s.discount > 0 ? `-${formatCurrency(s.discount, businessConfig.currency)}` : '—'}
+                    </td>
+                    <td className="py-3 text-right">{renderPersistedTaxBadge(s)}</td>
                     <td className="py-3 text-right font-bold text-slate-900">
-                      {businessConfig.currency} {Number(s.total).toLocaleString()}
+                      {formatCurrency(s.total, businessConfig.currency)}
                     </td>
                     <td className="py-3 text-right font-semibold text-emerald-600">
-                      {businessConfig.currency} {Number(s.profit || 0).toLocaleString()}
+                      {formatCurrency(s.profit || 0, businessConfig.currency)}
                     </td>
-                    <td className="py-3 text-right text-slate-500">{new Date(s.createdAt).toLocaleString()}</td>
+                    <td className="py-3 text-right text-slate-500">{formatDateTimeBD(s.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -535,6 +589,7 @@ export default function Sales() {
               value={custSearch}
               onChange={e => setCustSearch(e.target.value)}
               placeholder="Search customers by name, phone, or email..."
+              aria-label="Search customers"
               className="border border-slate-200 rounded-xl px-3.5 py-2 text-xs w-72 outline-none"
             />
             <button
@@ -568,9 +623,9 @@ export default function Sales() {
                     <td className="py-3 font-semibold text-slate-800">{c.name}</td>
                     <td className="py-3 text-slate-600">{c.phone}</td>
                     <td className="py-3 text-slate-500">{c.email || '—'}</td>
-                    <td className="py-3 text-center font-semibold">{c.totalOrders || 0}</td>
+                    <td className="py-3 text-center font-semibold">{formatCount(c.totalOrders || 0, 'order')}</td>
                     <td className="py-3 text-right font-bold text-slate-900">
-                      {businessConfig.currency} {Number(c.totalSpent || 0).toLocaleString()}
+                      {formatCurrency(c.totalSpent || 0, businessConfig.currency)}
                     </td>
                     <td className="py-3 text-right space-x-2">
                       <button
@@ -607,6 +662,79 @@ export default function Sales() {
         </div>
       )}
 
+      {/* Invoice Detail Modal (IMP-16) */}
+      {invoiceModal && (
+        <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4 text-xs">
+            <div className="flex justify-between items-start border-b pb-3">
+              <div>
+                <h3 className="font-bold text-base text-slate-900">
+                  Invoice {invoiceModal.invoiceNumber}
+                </h3>
+                <p className="text-slate-500">
+                  {invoiceModal.customerName || 'Walk-in Customer'} · {formatDateTimeBD(invoiceModal.createdAt)}
+                </p>
+              </div>
+              <button
+                onClick={() => setInvoiceModal(null)}
+                className="text-slate-400 hover:text-slate-700 text-base"
+                aria-label="Close invoice details"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
+              {(invoiceModal.items || []).map((item, idx) => (
+                <div key={item._id || idx} className="py-2 flex justify-between items-center">
+                  <div>
+                    <div className="font-semibold text-slate-800">{item.name}</div>
+                    <div className="text-slate-400">
+                      {formatUnits(item.quantity)} × {formatCurrency(item.price, businessConfig.currency)}
+                    </div>
+                  </div>
+                  <div className="font-semibold text-slate-800">
+                    {formatCurrency(item.subtotal, businessConfig.currency)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t pt-3 space-y-1.5">
+              <div className="flex justify-between text-slate-600">
+                <span>Subtotal</span>
+                <span>{formatCurrency(invoiceModal.subtotal, businessConfig.currency)}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Discount</span>
+                <span>{formatCurrency(invoiceModal.discount || 0, businessConfig.currency)}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>
+                  Applied Tax{' '}
+                  {invoiceModal.taxRate !== null && invoiceModal.taxRate !== undefined
+                    ? `(${invoiceModal.taxRate}% snapshot)`
+                    : '(Legacy invoice)'}
+                </span>
+                <span>
+                  {invoiceModal.taxAmount !== null && invoiceModal.taxAmount !== undefined
+                    ? formatCurrency(invoiceModal.taxAmount, businessConfig.currency)
+                    : 'Not recorded'}
+                </span>
+              </div>
+              <div className="flex justify-between font-extrabold text-sm text-slate-900 pt-1.5 border-t">
+                <span>Total Paid ({invoiceModal.paymentMethod || 'cash'})</span>
+                <span>{formatCurrency(invoiceModal.total, businessConfig.currency)}</span>
+              </div>
+              <div className="flex justify-between text-emerald-700 font-semibold pt-1">
+                <span>Net Profit (excl. tax)</span>
+                <span>{formatCurrency(invoiceModal.profit || 0, businessConfig.currency)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Customer Create/Edit Modal */}
       {showCustModal && (
         <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
@@ -617,6 +745,7 @@ export default function Sales() {
             <input
               required
               placeholder="Customer Name"
+              aria-label="Customer Name"
               value={custForm.name}
               onChange={e => setCustForm({ ...custForm, name: e.target.value })}
               className="w-full border rounded-xl px-3 py-2"
@@ -624,6 +753,7 @@ export default function Sales() {
             <input
               required
               placeholder="Phone Number"
+              aria-label="Phone Number"
               value={custForm.phone}
               onChange={e => setCustForm({ ...custForm, phone: e.target.value })}
               className="w-full border rounded-xl px-3 py-2"
@@ -631,12 +761,14 @@ export default function Sales() {
             <input
               type="email"
               placeholder="Email (Optional)"
+              aria-label="Email"
               value={custForm.email}
               onChange={e => setCustForm({ ...custForm, email: e.target.value })}
               className="w-full border rounded-xl px-3 py-2"
             />
             <input
               placeholder="Address (Optional)"
+              aria-label="Address"
               value={custForm.address}
               onChange={e => setCustForm({ ...custForm, address: e.target.value })}
               className="w-full border rounded-xl px-3 py-2"
@@ -660,11 +792,11 @@ export default function Sales() {
             <div className="flex justify-between items-center border-b pb-2">
               <div>
                 <h3 className="font-bold text-base text-slate-900">
-                  {historyModal.customer.name} — Purchase History ({historyModal.purchaseHistory?.length || 0} orders)
+                  {historyModal.customer.name} — Purchase History ({formatCount(historyModal.purchaseHistory?.length || 0, 'order')})
                 </h3>
                 <p className="text-slate-500">
-                  {historyModal.customer.phone} · Total Spent: {businessConfig.currency}{' '}
-                  {Number(historyModal.customer.totalSpent || 0).toLocaleString()}
+                  {historyModal.customer.phone} · Total Spent:{' '}
+                  {formatCurrency(historyModal.customer.totalSpent || 0, businessConfig.currency)}
                 </p>
               </div>
               <button
@@ -683,12 +815,18 @@ export default function Sales() {
                     <div className="text-slate-500">
                       {(s.items || []).map(i => `${i.name} ×${i.quantity}`).join(', ')}
                     </div>
+                    {s.taxAmount !== null && s.taxAmount !== undefined && (
+                      <div className="text-[11px] text-slate-400">
+                        Subtotal: {formatCurrency(s.subtotal, businessConfig.currency)} · Tax ({s.taxRate ?? 0}%):{' '}
+                        {formatCurrency(s.taxAmount, businessConfig.currency)}
+                      </div>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     <div className="font-bold text-slate-900">
-                      {businessConfig.currency} {Number(s.total).toLocaleString()}
+                      {formatCurrency(s.total, businessConfig.currency)}
                     </div>
-                    <div className="text-slate-400">{new Date(s.createdAt).toLocaleString()}</div>
+                    <div className="text-slate-400">{formatDateTimeBD(s.createdAt)}</div>
                   </div>
                 </div>
               ))}

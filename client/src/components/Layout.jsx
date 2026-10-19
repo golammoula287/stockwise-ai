@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
+import { formatCount } from '../lib/formatters';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: '◧' },
@@ -18,7 +19,14 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
+  const [notifState, setNotifState] = useState({
+    alertsEnabled: true,
+    status: 'loading',
+    message: '',
+    lowStockCount: 0,
+    outOfStockCount: 0,
+    notifications: [],
+  });
 
   useEffect(() => {
     setMobileOpen(false);
@@ -26,15 +34,70 @@ export default function Layout({ children }) {
   }, [location.pathname]);
 
   useEffect(() => {
-    api.get('/dashboard/notifications')
-      .then(res => setNotifications(Array.isArray(res.data) ? res.data : []))
-      .catch(() => {});
+    let active = true;
+    api
+      .get('/dashboard/notifications')
+      .then(res => {
+        if (!active) return;
+        const payload = res.data;
+        if (Array.isArray(payload)) {
+          setNotifState({
+            alertsEnabled: true,
+            status: payload.length === 0 ? 'empty' : 'active',
+            message:
+              payload.length === 0
+                ? 'All products are well stocked.'
+                : `${formatCount(payload.length, 'low-stock alert')} active.`,
+            lowStockCount: payload.length,
+            outOfStockCount: payload.filter(n => n.severity === 'critical').length,
+            notifications: payload,
+          });
+        } else {
+          const list = Array.isArray(payload?.notifications) ? payload.notifications : [];
+          const alertsEnabled = payload?.alertsEnabled !== false;
+          const status =
+            payload?.status || (!alertsEnabled ? 'disabled' : list.length === 0 ? 'empty' : 'active');
+          const message =
+            payload?.message ||
+            (!alertsEnabled
+              ? 'Low-stock notifications are disabled in Preferences.'
+              : list.length === 0
+              ? 'All products are well stocked.'
+              : `${formatCount(list.length, 'low-stock alert')} active.`);
+
+          setNotifState({
+            alertsEnabled,
+            status,
+            message,
+            lowStockCount: Number(payload?.lowStockCount ?? list.length),
+            outOfStockCount: Number(payload?.outOfStockCount ?? 0),
+            notifications: list,
+          });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setNotifState({
+          alertsEnabled: true,
+          status: 'error',
+          message: 'Unable to load notifications. Please try again.',
+          lowStockCount: 0,
+          outOfStockCount: 0,
+          notifications: [],
+        });
+      });
+
+    return () => {
+      active = false;
+    };
   }, [location.pathname]);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+
+  const activeAlerts = notifState.notifications;
 
   return (
     <div className="min-h-screen flex bg-[#f4f7fb] text-slate-800">
@@ -44,7 +107,7 @@ export default function Layout({ children }) {
           <span className="bg-blue-600 w-7 h-7 rounded-lg grid place-items-center text-sm shadow">⬢</span>
           <span>StockWise AI</span>
         </div>
-        <nav className="px-3 py-4 space-y-1.5 flex-1">
+        <nav className="px-3 py-4 space-y-1.5 flex-1" aria-label="Primary Sidebar Navigation">
           {navItems.map(item => (
             <NavLink
               key={item.to}
@@ -83,9 +146,15 @@ export default function Layout({ children }) {
                 <span className="bg-blue-600 w-7 h-7 rounded-lg grid place-items-center text-sm">⬢</span>
                 <span>StockWise AI</span>
               </div>
-              <button onClick={() => setMobileOpen(false)} className="text-slate-400 hover:text-white text-lg">✕</button>
+              <button
+                onClick={() => setMobileOpen(false)}
+                className="text-slate-400 hover:text-white text-lg"
+                aria-label="Close navigation menu"
+              >
+                ✕
+              </button>
             </div>
-            <nav className="px-3 py-4 space-y-1.5 flex-1">
+            <nav className="px-3 py-4 space-y-1.5 flex-1" aria-label="Mobile Navigation">
               {navItems.map(item => (
                 <NavLink
                   key={item.to}
@@ -131,17 +200,18 @@ export default function Layout({ children }) {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Low-Stock Notification Bell */}
+            {/* Low-Stock Notification Bell (IMP-18) */}
             <div className="relative">
               <button
                 onClick={() => setNotifOpen(v => !v)}
                 className="relative p-2 rounded-full hover:bg-slate-100 text-slate-600 transition"
                 aria-label="Notifications"
+                aria-expanded={notifOpen}
               >
                 <span className="text-lg">🔔</span>
-                {notifications.length > 0 && (
+                {notifState.alertsEnabled && activeAlerts.length > 0 && (
                   <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center">
-                    {notifications.length}
+                    {activeAlerts.length}
                   </span>
                 )}
               </button>
@@ -149,23 +219,64 @@ export default function Layout({ children }) {
                 <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl p-3 z-50">
                   <div className="flex items-center justify-between pb-2 border-b">
                     <span className="font-semibold text-sm">Low-Stock Alerts</span>
-                    <span className="text-xs text-slate-500">{notifications.length} active</span>
+                    <span className="text-xs text-slate-500">
+                      {notifState.status === 'disabled'
+                        ? 'Disabled'
+                        : notifState.status === 'error'
+                        ? 'Unavailable'
+                        : `${activeAlerts.length} active`}
+                    </span>
                   </div>
                   <div className="max-h-64 overflow-auto divide-y divide-slate-100 mt-1">
-                    {notifications.map(n => (
-                      <div key={n.id} className="py-2.5 flex items-start gap-2.5 text-xs">
-                        <span className={`px-1.5 py-0.5 rounded font-semibold ${n.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {n.severity === 'critical' ? 'OUT' : 'LOW'}
-                        </span>
-                        <div className="flex-1">
-                          <div className="font-medium text-slate-800">{n.product}</div>
-                          <div className="text-slate-500">{n.message}</div>
+                    {notifState.status === 'disabled' && (
+                      <div className="py-5 px-2 text-center space-y-1.5">
+                        <div className="text-xs font-medium text-slate-700">
+                          Low-stock notifications are disabled in Preferences.
                         </div>
+                        {notifState.lowStockCount > 0 && (
+                          <div className="text-[11px] text-amber-700">
+                            ({formatCount(notifState.lowStockCount, 'product is', 'products are')} currently at or below threshold.)
+                          </div>
+                        )}
+                        <Link
+                          to="/settings"
+                          className="inline-block text-[11px] font-semibold text-blue-600 hover:underline"
+                        >
+                          Manage in Settings → Preferences
+                        </Link>
                       </div>
-                    ))}
-                    {notifications.length === 0 && (
-                      <div className="py-6 text-center text-xs text-slate-400">All products are well stocked</div>
                     )}
+
+                    {notifState.status === 'error' && (
+                      <div className="py-5 px-2 text-center text-xs text-red-600">
+                        {notifState.message || 'Unable to load notifications.'}
+                      </div>
+                    )}
+
+                    {notifState.status === 'empty' && (
+                      <div className="py-6 text-center text-xs text-slate-400">
+                        All products are well stocked.
+                      </div>
+                    )}
+
+                    {notifState.status === 'active' &&
+                      activeAlerts.map(n => (
+                        <div key={n.id} className="py-2.5 flex items-start gap-2.5 text-xs">
+                          <span
+                            className={`px-1.5 py-0.5 rounded font-semibold ${
+                              n.severity === 'critical'
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            {n.severity === 'critical' ? 'OUT' : 'LOW'}
+                          </span>
+                          <div className="flex-1">
+                            <div className="font-medium text-slate-800">{n.product}</div>
+                            <div className="text-slate-500">{n.message}</div>
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 </div>
               )}

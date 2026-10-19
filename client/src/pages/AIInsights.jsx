@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../lib/api';
+import { formatCount, formatUnits, formatSignedUnits, formatCurrency } from '../lib/formatters';
 
 export default function AIInsights() {
   const [tab, setTab] = useState('Overview');
@@ -34,9 +35,9 @@ export default function AIInsights() {
     try {
       await api.patch(`/products/${rec.productId}/stock`, {
         delta: rec.suggested,
-        note: `AI recommended restock (+${rec.suggested} units)`,
+        note: `AI recommended restock (${formatSignedUnits(rec.suggested)})`,
       });
-      setRestockMsg(`Restocked "${rec.product}" by +${rec.suggested} units.`);
+      setRestockMsg(`Restocked "${rec.product}" by ${formatSignedUnits(rec.suggested)}.`);
       load();
     } catch (e) {
       setErr(e.response?.data?.message || 'Failed to restock product');
@@ -60,6 +61,20 @@ export default function AIInsights() {
     );
   }
 
+  const thresholdAlertCount = data.thresholdAlertCount ?? data.lowStockCount ?? 0;
+  const forecastReorderCount = data.forecastReorderCount ?? data.eligibleForecastReorderCount ?? 0;
+  const enabledRecommendationCount = data.enabledRecommendationCount ?? data.recommendations.length;
+  const isSuggestionsDisabled = data.autoReorderEnabled === false;
+
+  const fallbackDisabledText =
+    thresholdAlertCount > 0
+      ? `${formatCount(thresholdAlertCount, 'product is', 'products are')} below ${
+          thresholdAlertCount === 1 ? 'its low-stock threshold' : 'their low-stock thresholds'
+        }. Automated reorder recommendations are disabled in Preferences.`
+      : 'All products are above their low-stock thresholds. Automated reorder recommendations are disabled in Preferences.';
+
+  const disabledSummaryMessage = data.disabledMessage || fallbackDisabledText;
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -72,10 +87,19 @@ export default function AIInsights() {
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-semibold">
-            Low-Stock Threshold Alerts: {data.lowStockCount ?? 0}
+            Low-Stock Threshold Alerts: {thresholdAlertCount}
           </span>
           <span className="px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 font-semibold">
-            Proactive Forecast Reorders: {data.forecastReorderCount ?? 0}
+            Proactive Forecast Reorders: {forecastReorderCount}
+          </span>
+          <span
+            className={`px-3 py-1.5 rounded-xl border font-semibold ${
+              isSuggestionsDisabled
+                ? 'bg-slate-100 border-slate-300 text-slate-600'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}
+          >
+            Automated AI Suggestions: {isSuggestionsDisabled ? 'Disabled' : `Enabled (${enabledRecommendationCount})`}
           </span>
         </div>
       </div>
@@ -132,7 +156,13 @@ export default function AIInsights() {
             <div className="text-xs font-extrabold text-blue-700">AI Business Summary</div>
             <p className="text-sm text-slate-800 font-medium mt-1 leading-relaxed">{data.summary}</p>
             <div className="text-[11px] text-slate-500 mt-1">
-              Note: Dashboard &ldquo;Low Stock Items&rdquo; ({data.lowStockCount}) counts items at or below their static threshold, while AI Insights ({data.recommendations.length}) combines threshold alerts ({data.thresholdAlertCount ?? data.lowStockCount}) with proactive 14-day demand forecast reorders ({data.forecastReorderCount ?? 0}).
+              {isSuggestionsDisabled ? (
+                <span>{disabledSummaryMessage}</span>
+              ) : (
+                <span>
+                  Note: Dashboard &ldquo;Low Stock Items&rdquo; ({thresholdAlertCount}) counts items at or below their static threshold, while AI Insights ({enabledRecommendationCount}) combines threshold alerts ({thresholdAlertCount}) with proactive 14-day demand forecast reorders ({forecastReorderCount}).
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -148,7 +178,7 @@ export default function AIInsights() {
           <div className="lg:col-span-7 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-bold text-sm text-slate-900">
-                Stock Recommendations ({data.recommendations.length})
+                Stock Recommendations ({enabledRecommendationCount})
               </h2>
               <button
                 onClick={() => setTab('Recommendations')}
@@ -193,13 +223,13 @@ export default function AIInsights() {
 
                       <div className="text-[11px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
                         <span>
-                          Stock: <strong className="text-slate-800">{rec.stock}</strong> (Threshold: {rec.lowStockThreshold})
+                          Stock: <strong className="text-slate-800">{formatUnits(rec.stock)}</strong> (Threshold: {formatUnits(rec.lowStockThreshold)})
                         </span>
                         <span>
-                          14d Forecast: <strong className="text-slate-800">{rec.forecast14d} units</strong> ({rec.forecast14dContinuous ?? rec.forecast14d})
+                          14d Forecast: <strong className="text-slate-800">{formatUnits(rec.forecast14d)}</strong> ({rec.forecast14dContinuous ?? rec.forecast14d})
                         </span>
                         <span>
-                          Safety Stock: <strong>{rec.safetyStock}</strong> · ROP: <strong>{rec.reorderPoint ?? rec.safetyStock}</strong>
+                          Safety Stock: <strong>{formatUnits(rec.safetyStock)}</strong> · ROP: <strong>{formatUnits(rec.reorderPoint ?? rec.safetyStock)}</strong>
                         </span>
                         <span>
                           14d Stockout Risk: <strong className={rec.stockoutProbability >= 70 ? 'text-red-600' : 'text-slate-800'}>{rec.stockoutProbability}%</strong>
@@ -207,7 +237,7 @@ export default function AIInsights() {
                       </div>
 
                       <div className="text-[11px] text-blue-700 font-semibold">
-                        Recommended Order: +{rec.suggested} units (Est. cost: ৳ {Number(rec.estimatedCost || 0).toLocaleString()})
+                        Recommended Order: {formatSignedUnits(rec.suggested)} (Est. cost: {formatCurrency(rec.estimatedCost || 0)})
                       </div>
 
                       {rec.explainability && (
@@ -236,10 +266,17 @@ export default function AIInsights() {
                 </div>
               ))}
               {data.recommendations.length === 0 && (
-                <div className="text-center py-8 text-xs text-slate-400">
-                  {data.autoReorderEnabled === false
-                    ? 'Automated AI reorder suggestions are currently disabled in Settings → Preferences.'
-                    : 'All products are above their low-stock thresholds and 14-day reorder points.'}
+                <div className="text-center py-8 px-4 text-xs text-slate-500">
+                  {isSuggestionsDisabled ? (
+                    <div className="space-y-1">
+                      <div className="font-semibold text-slate-700">{disabledSummaryMessage}</div>
+                      <div className="text-[11px] text-slate-400">
+                        Re-enable &ldquo;Automated AI Reorder Suggestions&rdquo; in Settings → Preferences to generate restock quantities.
+                      </div>
+                    </div>
+                  ) : (
+                    'All products are above their low-stock thresholds and 14-day reorder points.'
+                  )}
                 </div>
               )}
             </div>
@@ -264,7 +301,7 @@ export default function AIInsights() {
                     <div className="flex justify-between text-xs">
                       <span className="font-bold text-slate-800 truncate">{tp.name}</span>
                       <span className="text-slate-500 font-medium">
-                        {tp.sold} sold · ৳ {Number(tp.revenue || 0).toLocaleString()}
+                        {formatUnits(tp.sold)} sold · {formatCurrency(tp.revenue || 0)}
                       </span>
                     </div>
                     <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-1.5">
@@ -306,9 +343,9 @@ export default function AIInsights() {
                     <div className="text-[11px] text-slate-500 mt-0.5">{item.suggestion}</div>
                   </div>
                   <div className="text-right">
-                    <div className="font-semibold text-slate-700">{item.stock} in stock</div>
+                    <div className="font-semibold text-slate-700">{formatUnits(item.stock)} in stock</div>
                     <div className="text-[11px] text-slate-400">
-                      Capital: ৳ {Number(item.tiedCapital || 0).toLocaleString()}
+                      Capital: {formatCurrency(item.tiedCapital || 0)}
                     </div>
                   </div>
                 </div>
@@ -325,13 +362,13 @@ export default function AIInsights() {
                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
                   <div className="text-slate-500">Revenue This Month</div>
                   <div className="text-lg font-extrabold text-slate-900 mt-1">
-                    ৳ {Number(data.revenueThisMonth || 0).toLocaleString()}
+                    {formatCurrency(data.revenueThisMonth || 0)}
                   </div>
                 </div>
                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
                   <div className="text-slate-500">Profit This Month</div>
                   <div className="text-lg font-extrabold text-emerald-600 mt-1">
-                    ৳ {Number(data.profitThisMonth || 0).toLocaleString()}
+                    {formatCurrency(data.profitThisMonth || 0)}
                   </div>
                 </div>
                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
@@ -352,7 +389,7 @@ export default function AIInsights() {
               <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1.5">
                 <div>
                   <strong>Methodology:</strong> {data.modelEvaluation.methodology} evaluated across{' '}
-                  {data.modelEvaluation.evaluatedProducts} active products over a{' '}
+                  {formatCount(data.modelEvaluation.evaluatedProducts, 'active product')} over a{' '}
                   {data.modelEvaluation.windowDays}-day window against {data.modelEvaluation.baselineMethod}.
                 </div>
                 {Array.isArray(data.modelEvaluation.assumptionsAndLimitations) && (

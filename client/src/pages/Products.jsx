@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
 import api from '../lib/api';
+import {
+  formatCount,
+  formatUnits,
+  formatSignedUnits,
+  formatCurrency,
+  formatDateTimeBD,
+} from '../lib/formatters';
 
 const categoriesList = ['All Categories', 'Electronics', 'Accessories', 'Audio', 'Storage'];
 const statusesList = ['All Status', 'In Stock', 'Low Stock', 'Out of Stock'];
@@ -163,8 +170,8 @@ export default function Products() {
     const resolvedNote = trimmedNote
       ? trimmedNote
       : deltaNum > 0
-      ? `Stock restock (+${deltaNum})`
-      : `Manual stock adjustment (${deltaNum})`;
+      ? `Stock restock (${formatSignedUnits(deltaNum)})`
+      : `Manual stock adjustment (${formatSignedUnits(deltaNum)})`;
 
     setSubmitting(true);
     try {
@@ -173,7 +180,7 @@ export default function Products() {
         note: resolvedNote,
       });
       setFeedback(
-        `Stock updated for "${adjustTarget.name}" (${deltaNum > 0 ? '+' : ''}${deltaNum} units · ${resolvedNote}).`
+        `Stock updated for "${adjustTarget.name}" (${formatSignedUnits(deltaNum)} · ${resolvedNote}).`
       );
       setAdjustTarget(null);
       setAdjustNote('');
@@ -189,6 +196,9 @@ export default function Products() {
   };
 
   const handleDelete = async (p) => {
+    if (!window.confirm(`Are you sure you want to delete "${p.name}"?`)) {
+      return;
+    }
     // Always clear previous feedback before attempting deletion (fixes IMP-12)
     setFeedback('');
     setErr('');
@@ -312,13 +322,13 @@ export default function Products() {
                       </span>
                     </td>
                     <td className={`py-3 text-center font-bold ${log.change > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {log.change > 0 ? `+${log.change}` : log.change}
+                      {formatSignedUnits(log.change)}
                     </td>
                     <td className="py-3 text-center text-slate-600">
-                      {log.previousStock} → {log.newStock}
+                      {log.previousStock} → {formatUnits(log.newStock)}
                     </td>
                     <td className="py-3 text-slate-600">{log.note}</td>
-                    <td className="py-3 text-right text-slate-400">{new Date(log.createdAt).toLocaleString()}</td>
+                    <td className="py-3 text-right text-slate-400">{formatDateTimeBD(log.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -336,14 +346,14 @@ export default function Products() {
               <div key={c.category} className="border border-slate-200 rounded-xl p-4 hover:border-blue-300 transition">
                 <div className="font-bold text-slate-900 text-sm">{c.category}</div>
                 <div className="text-xs text-slate-500 mt-1">
-                  {c.count} products · {c.totalStock} units in stock
+                  {formatCount(c.count, 'product')} · {formatUnits(c.totalStock)} in stock
                 </div>
                 <div className="text-sm font-extrabold text-blue-600 mt-2">
-                  Value: ৳ {Number(c.totalValue).toLocaleString()}
+                  Value: {formatCurrency(c.totalValue)}
                 </div>
                 {c.lowStockCount > 0 && (
                   <div className="mt-2 inline-block text-[11px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                    {c.lowStockCount} low stock
+                    {formatCount(c.lowStockCount, 'low-stock item')}
                   </div>
                 )}
               </div>
@@ -365,6 +375,7 @@ export default function Products() {
                     setPage(1);
                   }}
                   placeholder="Search by product name, SKU, or category..."
+                  aria-label="Search products"
                   className="w-full border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs outline-none focus:border-blue-500"
                 />
               </div>
@@ -445,7 +456,7 @@ export default function Products() {
                             <div>
                               <div>{p.name}</div>
                               <div className="text-[10px] text-slate-400 font-normal">
-                                Threshold: {p.lowStockThreshold ?? 5} units
+                                Threshold: {formatUnits(p.lowStockThreshold ?? 5)}
                               </div>
                             </div>
                           </div>
@@ -460,7 +471,7 @@ export default function Products() {
                           )}
                         </td>
                         <td className="py-3 text-slate-600">{p.category}</td>
-                        <td className="py-3 font-semibold text-slate-800">৳ {Number(p.price).toLocaleString()}</td>
+                        <td className="py-3 font-semibold text-slate-800">{formatCurrency(p.price)}</td>
                         <td className="py-3 text-center">
                           <span
                             className={`font-bold ${
@@ -521,6 +532,7 @@ export default function Products() {
                               setShowModal(true);
                             }}
                             title="Edit product"
+                            aria-label={`Edit ${p.name}`}
                             className="p-1.5 rounded border border-slate-200 hover:bg-slate-100 text-slate-600"
                           >
                             ✎
@@ -528,6 +540,7 @@ export default function Products() {
                           <button
                             onClick={() => handleDelete(p)}
                             title="Delete product"
+                            aria-label={`Delete ${p.name}`}
                             className="p-1.5 rounded border border-red-100 hover:bg-red-50 text-red-500"
                           >
                             🗑
@@ -545,13 +558,15 @@ export default function Products() {
                 {/* Pagination Footer */}
                 <div className="flex flex-wrap justify-between items-center mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500 gap-2">
                   <span>
-                    Showing {products.length ? (page - 1) * 5 + 1 : 0} to {Math.min(page * 5, total)} of {total} products
+                    Showing {products.length ? (page - 1) * 5 + 1 : 0} to {Math.min(page * 5, total)} of{' '}
+                    {formatCount(total, 'product')}
                   </span>
                   <div className="flex items-center gap-1">
                     <button
                       disabled={page <= 1}
                       onClick={() => setPage(p => Math.max(1, p - 1))}
                       className="w-7 h-7 border rounded-lg disabled:opacity-40"
+                      aria-label="Previous page"
                     >
                       ‹
                     </button>
@@ -570,6 +585,7 @@ export default function Products() {
                       disabled={page >= pages}
                       onClick={() => setPage(p => Math.min(pages, p + 1))}
                       className="w-7 h-7 border rounded-lg disabled:opacity-40"
+                      aria-label="Next page"
                     >
                       ›
                     </button>
@@ -715,7 +731,7 @@ export default function Products() {
           <form onSubmit={handleAdjustStock} className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-3 text-xs">
             <h3 className="font-bold text-base text-slate-900">Adjust Stock — {adjustTarget.name}</h3>
             <p className="text-slate-500">
-              Current stock: <strong>{adjustTarget.stock}</strong> units
+              Current stock: <strong>{formatUnits(adjustTarget.stock)}</strong>
               {adjustTarget.sku ? ` · SKU: ${adjustTarget.sku}` : ''}
             </p>
             {modalErr && (
@@ -744,7 +760,7 @@ export default function Products() {
                     adjustTarget.stock + Number(adjustDelta) < 0 ? 'text-red-600' : 'text-slate-500'
                   }`}
                 >
-                  Resulting stock: {adjustTarget.stock} → {adjustTarget.stock + Number(adjustDelta)} units
+                  Resulting stock: {adjustTarget.stock} → {formatUnits(adjustTarget.stock + Number(adjustDelta))}
                 </div>
               )}
             </div>

@@ -1,4 +1,5 @@
 const { getPrisma } = require('../config/db');
+const { formatCount, formatUnits } = require('./formatters');
 
 /**
  * Standard Normal CDF approximation (Abramowitz & Stegun 7.1.26)
@@ -413,17 +414,21 @@ async function generateInsights(options = {}) {
     (evalSet.reduce((s, f) => s + f.ml.rmseModel, 0) / Math.max(evalSet.length, 1)).toFixed(3)
   );
 
-  // Separate threshold alerts from forecast-driven reorder triggers (fixes IMP-03)
+  // Separate actual low-stock threshold alerts, eligible forecast reorders, and enabled recommendations (IMP-03 & IMP-17)
   const lowStockProducts = products.filter(p => p.stock <= (p.lowStockThreshold ?? 5));
-  const recommendationCandidates = autoReorderEnabled
-    ? productForecasts.filter(
-        f =>
-          f.product.stock <= f.threshold ||
-          (f.sold30 > 0 && (f.product.stock < f.reorderPoint || f.stockoutProbability >= 60))
-      )
-    : [];
+  const allEligibleCandidates = productForecasts.filter(
+    f =>
+      f.product.stock <= f.threshold ||
+      (f.sold30 > 0 && (f.product.stock < f.reorderPoint || f.stockoutProbability >= 60))
+  );
 
-  const recommendations = recommendationCandidates
+  const actualThresholdAlertCount = lowStockProducts.length;
+  const eligibleForecastReorderCount = allEligibleCandidates.filter(
+    f => f.product.stock > f.threshold
+  ).length;
+  const eligibleRecommendationCount = allEligibleCandidates.length;
+
+  const mappedRecommendations = allEligibleCandidates
     .map(f => {
       const p = f.product;
       const isBelowThreshold = p.stock <= f.threshold;
@@ -442,7 +447,7 @@ async function generateInsights(options = {}) {
       const explainability =
         f.sold30 === 0
           ? `Below low-stock threshold (${p.stock} ≤ ${f.threshold}); 0 units sold in last 30d · 14d forecast: 0 units (${f.stockoutProbability}% 14d stockout risk)`
-          : `${f.ml.selectedModel}: 14d forecast ${f.forecast14dContinuous} units (~${f.expected14dDemand} units, trend ${f.ml.trendSlope >= 0 ? '+' : ''}${f.ml.trendSlope}/day), ROP ${f.reorderPoint} (7d lead time + ${f.safetyStock} safety stock), 14d stockout risk ${f.stockoutProbability}%`;
+          : `${f.ml.selectedModel}: 14d forecast ${formatUnits(f.forecast14dContinuous)} (${formatUnits(f.expected14dDemand, '~')}, trend ${f.ml.trendSlope >= 0 ? '+' : ''}${f.ml.trendSlope}/day), ROP ${f.reorderPoint} (7d lead time + ${f.safetyStock} safety stock), 14d stockout risk ${f.stockoutProbability}%`;
 
       return {
         productId: p.id,
@@ -474,10 +479,10 @@ async function generateInsights(options = {}) {
         explainability,
         reason:
           p.stock === 0
-            ? `Out of stock (0 units) · 14d forecast: ${f.expected14dDemand} units (${f.stockoutProbability}% stockout risk)`
+            ? `Out of stock (0 units) · 14d forecast: ${formatUnits(f.expected14dDemand)} (${f.stockoutProbability}% stockout risk)`
             : isBelowThreshold
-            ? `Below threshold (${p.stock}/${f.threshold}) · 14d forecast: ${f.expected14dDemand} units (${f.stockoutProbability}% risk)`
-            : `Proactive reorder (stock ${p.stock} < ROP ${f.reorderPoint}) · 14d forecast: ${f.expected14dDemand} units (${f.stockoutProbability}% risk)`,
+            ? `Below threshold (${p.stock}/${f.threshold}) · 14d forecast: ${formatUnits(f.expected14dDemand)} (${f.stockoutProbability}% risk)`
+            : `Proactive reorder (stock ${p.stock} < ROP ${f.reorderPoint}) · 14d forecast: ${formatUnits(f.expected14dDemand)} (${f.stockoutProbability}% risk)`,
       };
     })
     .sort((a, b) => {
@@ -488,8 +493,16 @@ async function generateInsights(options = {}) {
       return b.stockoutProbability - a.stockoutProbability || a.stock - b.stock;
     });
 
-  const thresholdAlertCount = recommendations.filter(r => r.triggerType === 'threshold').length;
-  const forecastReorderCount = recommendations.filter(r => r.triggerType === 'forecast').length;
+  const recommendations = autoReorderEnabled ? mappedRecommendations : [];
+  const enabledRecommendationCount = recommendations.length;
+  const recommendationState = autoReorderEnabled ? 'enabled' : 'disabled';
+
+  const disabledStatusMessage =
+    actualThresholdAlertCount > 0
+      ? `${formatCount(actualThresholdAlertCount, 'product is', 'products are')} below ${
+          actualThresholdAlertCount === 1 ? 'its low-stock threshold' : 'their low-stock thresholds'
+        }. Automated reorder recommendations are disabled in Preferences.`
+      : 'All products are above their low-stock thresholds. Automated reorder recommendations are disabled in Preferences.';
 
   // Identify slow-moving products (in stock, 0 sales in last 30 days)
   const soldIds = new Set(Object.keys(salesByProduct));
@@ -534,17 +547,15 @@ async function generateInsights(options = {}) {
   }
 
   if (!autoReorderEnabled) {
-    parts.push(
-      `Automated AI reorder suggestions are currently disabled in Preferences (${lowStockProducts.length} low-stock threshold item${lowStockProducts.length === 1 ? '' : 's'}).`
-    );
+    parts.push(disabledStatusMessage);
   } else if (recommendations.length > 0) {
-    if (forecastReorderCount > 0) {
+    if (eligibleForecastReorderCount > 0) {
       parts.push(
-        `${recommendations.length} products are flagged for restocking (${thresholdAlertCount} low-stock threshold alert${thresholdAlertCount === 1 ? '' : 's'} + ${forecastReorderCount} proactive 14-day demand forecast${forecastReorderCount === 1 ? '' : 's'}).`
+        `${formatCount(recommendations.length, 'product is', 'products are')} flagged for restocking (${formatCount(actualThresholdAlertCount, 'low-stock threshold alert')} + ${formatCount(eligibleForecastReorderCount, 'proactive 14-day demand forecast')}).`
       );
     } else {
       parts.push(
-        `${recommendations.length} product${recommendations.length > 1 ? 's' : ''} need restocking based on low-stock thresholds and 14-day demand forecasting.`
+        `${formatCount(recommendations.length, 'product needs', 'products need')} restocking based on low-stock thresholds and 14-day demand forecasting.`
       );
     }
   } else {
@@ -560,6 +571,8 @@ async function generateInsights(options = {}) {
   return {
     summary: parts.join(' '),
     autoReorderEnabled,
+    recommendationState,
+    disabledMessage: autoReorderEnabled ? null : disabledStatusMessage,
     revenueThisMonth,
     profitThisMonth,
     revenueLastMonth,
@@ -570,9 +583,12 @@ async function generateInsights(options = {}) {
     topProducts,
     recommendations,
     lowStock: recommendations,
-    lowStockCount: lowStockProducts.length,
-    thresholdAlertCount,
-    forecastReorderCount,
+    lowStockCount: actualThresholdAlertCount,
+    thresholdAlertCount: actualThresholdAlertCount,
+    forecastReorderCount: eligibleForecastReorderCount,
+    eligibleForecastReorderCount,
+    eligibleRecommendationCount,
+    enabledRecommendationCount,
     slowMoving,
     categoryBreakdown: Object.values(categoryStats).sort((a, b) => b.revenue - a.revenue),
     modelEvaluation: {

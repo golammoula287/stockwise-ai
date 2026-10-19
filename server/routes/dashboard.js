@@ -1,6 +1,7 @@
 const express = require('express');
 const { getPrisma } = require('../config/db');
 const { protect } = require('../middleware/auth');
+const { formatCount, formatUnits } = require('../utils/formatters');
 
 const router = express.Router();
 
@@ -55,6 +56,25 @@ function computePctChange(currentVal, prevVal) {
     return cur > 0 ? 100 : 0;
   }
   return Math.round(((cur - prev) / prev) * 100);
+}
+
+function buildLowStockAlertItems(lowStockProducts) {
+  return lowStockProducts.map(p => {
+    const threshold = p.lowStockThreshold ?? 5;
+    return {
+      id: p.id,
+      product: p.name,
+      sku: p.sku || null,
+      category: p.category,
+      stock: p.stock,
+      threshold,
+      severity: p.stock === 0 ? 'critical' : 'warning',
+      message:
+        p.stock === 0
+          ? `${p.name} is out of stock (0 units remaining)`
+          : `${p.name} has only ${formatUnits(p.stock)} left (threshold: ${formatUnits(threshold)})`,
+    };
+  });
 }
 
 router.get('/stats', async (req, res, next) => {
@@ -126,21 +146,17 @@ router.get('/stats', async (req, res, next) => {
     const productsChange = computePctChange(productsThisMonth, productsLastMonth);
 
     const lowStockAlertsEnabled = setting?.preferences?.lowStockAlerts !== false;
-    const notifications = lowStockAlertsEnabled
-      ? lowStockProducts.map(p => ({
-          id: p.id,
-          product: p.name,
-          sku: p.sku || null,
-          category: p.category,
-          stock: p.stock,
-          threshold: p.lowStockThreshold ?? 5,
-          severity: p.stock === 0 ? 'critical' : 'warning',
-          message:
-            p.stock === 0
-              ? `${p.name} is out of stock (0 remaining)`
-              : `${p.name} is running low (${p.stock} left, threshold ${p.lowStockThreshold ?? 5})`,
-        }))
-      : [];
+    const notifications = lowStockAlertsEnabled ? buildLowStockAlertItems(lowStockProducts) : [];
+    const notificationsStatus = !lowStockAlertsEnabled
+      ? 'disabled'
+      : notifications.length === 0
+      ? 'empty'
+      : 'active';
+    const notificationsMessage = !lowStockAlertsEnabled
+      ? 'Low-stock notifications are disabled in Preferences.'
+      : notifications.length === 0
+      ? 'All products are well stocked.'
+      : `${formatCount(notifications.length, 'low-stock alert')} active.`;
 
     res.json({
       dateFilter: label,
@@ -155,6 +171,8 @@ router.get('/stats', async (req, res, next) => {
       lowStockCount: lowStockProducts.length,
       outOfStockCount: outOfStockProducts.length,
       lowStockAlertsEnabled,
+      notificationsStatus,
+      notificationsMessage,
       changes: {
         products: productsChange,
         sales: salesChange,
@@ -194,6 +212,8 @@ router.get('/recent-sales', async (req, res, next) => {
       invoiceNumber: s.invoiceNumber,
       customer: s.customer?.name || s.customerName || 'Walk-in Customer',
       amount: s.total,
+      taxAmount: s.taxAmount ?? null,
+      taxRate: s.taxRate ?? null,
       profit: s.profit || 0,
       itemsCount: (s.items || []).reduce((acc, i) => acc + i.quantity, 0),
       date: s.createdAt,
@@ -295,6 +315,14 @@ router.get('/sales-overview', async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/dashboard/notifications
+ * Distinguishes between:
+ *  - disabled: Low-stock notifications are disabled in Preferences.
+ *  - empty:    All products are well stocked.
+ *  - active:   Active low-stock/out-of-stock alerts.
+ * Dashboard inventory counts (lowStockCount, outOfStockCount) remain independent of preference state (IMP-18).
+ */
 router.get('/notifications', async (req, res, next) => {
   try {
     const prisma = getPrisma();
@@ -303,29 +331,38 @@ router.get('/notifications', async (req, res, next) => {
       prisma.setting.findFirst({ where: { userId: req.user.id } }),
     ]);
 
+    const lowStockProducts = products.filter(p => p.stock <= (p.lowStockThreshold ?? 5));
+    const outOfStockProducts = products.filter(p => p.stock === 0);
+
     const lowStockAlertsEnabled =
       req.query.force === 'true' ? true : setting?.preferences?.lowStockAlerts !== false;
 
     if (!lowStockAlertsEnabled) {
-      return res.json([]);
+      return res.json({
+        alertsEnabled: false,
+        status: 'disabled',
+        message: 'Low-stock notifications are disabled in Preferences.',
+        lowStockCount: lowStockProducts.length,
+        outOfStockCount: outOfStockProducts.length,
+        notifications: [],
+      });
     }
 
-    const lowStock = products
-      .filter(p => p.stock <= (p.lowStockThreshold ?? 5))
-      .map(p => ({
-        id: p.id,
-        product: p.name,
-        sku: p.sku || null,
-        category: p.category,
-        stock: p.stock,
-        threshold: p.lowStockThreshold ?? 5,
-        severity: p.stock === 0 ? 'critical' : 'warning',
-        message:
-          p.stock === 0
-            ? `${p.name} is out of stock!`
-            : `${p.name} has only ${p.stock} units left (threshold: ${p.lowStockThreshold ?? 5})`,
-      }));
-    res.json(lowStock);
+    const notifications = buildLowStockAlertItems(lowStockProducts);
+    const status = notifications.length === 0 ? 'empty' : 'active';
+    const message =
+      notifications.length === 0
+        ? 'All products are well stocked.'
+        : `${formatCount(notifications.length, 'low-stock alert')} active.`;
+
+    res.json({
+      alertsEnabled: true,
+      status,
+      message,
+      lowStockCount: lowStockProducts.length,
+      outOfStockCount: outOfStockProducts.length,
+      notifications,
+    });
   } catch (err) {
     next(err);
   }
