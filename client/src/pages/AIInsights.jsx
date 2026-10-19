@@ -24,6 +24,7 @@ export default function AIInsights() {
   useEffect(() => { load(); }, []);
 
   const quickRestock = async (rec) => {
+    setErr('');
     try {
       await api.patch(`/products/${rec.productId}/stock`, {
         delta: rec.suggested,
@@ -32,18 +33,18 @@ export default function AIInsights() {
       setRestockMsg(`Restocked ${rec.product} by +${rec.suggested} units.`);
       load();
     } catch (e) {
-      alert(e.response?.data?.message || 'Failed to restock');
+      setErr(e.response?.data?.message || 'Failed to restock product');
     }
   };
 
   if (loading) {
     return (
       <div className="bg-white border rounded-2xl p-10 text-center text-slate-500 text-sm">
-        Analyzing live inventory &amp; sales velocity...
+        Running Holt time-series demand forecasting &amp; stockout risk model...
       </div>
     );
   }
-  if (err) {
+  if (err && !data) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-red-700 text-sm">
         {err}
@@ -80,6 +81,12 @@ export default function AIInsights() {
         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-4 py-2.5 rounded-xl flex justify-between">
           <span>✓ {restockMsg}</span>
           <button onClick={() => setRestockMsg('')}>✕</button>
+        </div>
+      )}
+      {err && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-xs px-4 py-2.5 rounded-xl flex justify-between">
+          <span>{err}</span>
+          <button onClick={() => setErr('')}>✕</button>
         </div>
       )}
 
@@ -131,6 +138,9 @@ export default function AIInsights() {
                       <div className="text-[11px] text-slate-500">
                         Current stock: <strong className="text-slate-700">{rec.stock}</strong> · Recommended: <strong className="text-slate-800">{rec.suggested} units</strong>
                       </div>
+                      {rec.explainability && (
+                        <div className="text-[10px] text-slate-400 mt-0.5">{rec.explainability}</div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -189,7 +199,7 @@ export default function AIInsights() {
         </div>
       )}
 
-      {/* Demand Analysis & Slow-Moving Inventory */}
+      {/* Demand Analysis, Slow-Moving & Model Evaluation */}
       {(tab === 'Overview' || tab === 'Demand Analysis') && (
         <div className="grid md:grid-cols-2 gap-5">
           <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
@@ -213,28 +223,33 @@ export default function AIInsights() {
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
-            <h3 className="font-bold text-sm text-slate-900 mb-2">Sales Trend &amp; Performance Metrics</h3>
-            <div className="grid grid-cols-2 gap-3 text-xs mt-3">
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="text-slate-500">Revenue This Month</div>
-                <div className="text-lg font-extrabold text-slate-900 mt-1">৳ {Number(data.revenueThisMonth || 0).toLocaleString()}</div>
-              </div>
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="text-slate-500">Profit This Month</div>
-                <div className="text-lg font-extrabold text-emerald-600 mt-1">৳ {Number(data.profitThisMonth || 0).toLocaleString()}</div>
-              </div>
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="text-slate-500">Month-over-Month Trend</div>
-                <div className="text-lg font-extrabold text-blue-600 mt-1">
-                  {data.revenueChangePct >= 0 ? `+${data.revenueChangePct}%` : `${data.revenueChangePct}%`}
+          <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4">
+            <div>
+              <h3 className="font-bold text-sm text-slate-900 mb-2">Sales Trend &amp; Forecasting Model Evaluation</h3>
+              <div className="grid grid-cols-2 gap-3 text-xs mt-3">
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="text-slate-500">Revenue This Month</div>
+                  <div className="text-lg font-extrabold text-slate-900 mt-1">৳ {Number(data.revenueThisMonth || 0).toLocaleString()}</div>
+                </div>
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="text-slate-500">Profit This Month</div>
+                  <div className="text-lg font-extrabold text-emerald-600 mt-1">৳ {Number(data.profitThisMonth || 0).toLocaleString()}</div>
+                </div>
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="text-slate-500">Holt Model Walk-Forward MAE</div>
+                  <div className="text-lg font-extrabold text-blue-600 mt-1">{data.modelEvaluation?.maeModel ?? '—'}</div>
+                </div>
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="text-slate-500">7-Day SMA Baseline MAE</div>
+                  <div className="text-lg font-extrabold text-slate-700 mt-1">{data.modelEvaluation?.maeBaseline ?? '—'}</div>
                 </div>
               </div>
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="text-slate-500">Average Order Value</div>
-                <div className="text-lg font-extrabold text-slate-900 mt-1">৳ {Number(data.averageOrderValue || 0).toLocaleString()}</div>
-              </div>
             </div>
+            {data.modelEvaluation && (
+              <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                <strong>Methodology:</strong> {data.modelEvaluation.methodology} evaluated across {data.modelEvaluation.evaluatedProducts} products over a {data.modelEvaluation.windowDays}-day window against {data.modelEvaluation.baselineMethod}.
+              </div>
+            )}
           </div>
         </div>
       )}

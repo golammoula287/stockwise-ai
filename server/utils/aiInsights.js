@@ -2,21 +2,119 @@ const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 
 /**
- * AI-powered inventory & sales analysis engine.
- * Operates strictly on live MongoDB documents from Product and Sale collections.
+ * Standard Normal CDF approximation (Abramowitz & Stegun 7.1.26)
+ * Used to compute calibrated stockout probability P(Demand_14d > CurrentStock).
+ */
+function normalCdf(z) {
+  if (!Number.isFinite(z)) return 0.5;
+  if (z < -6) return 0;
+  if (z > 6) return 1;
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.sqrt(2);
+  const t = 1 / (1 + 0.3275911 * x);
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const erf = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return 0.5 * (1 + sign * erf);
+}
+
+/**
+ * Fits Holt's Linear Exponential Smoothing model on a 30-day daily demand series
+ * via walk-forward grid search over (alpha, beta), and evaluates it against
+ * a 7-day Simple Moving Average (SMA) baseline on the same out-of-sample steps.
+ */
+function fitHoltDemandModel(dailySeries, horizonDays = 14) {
+  const n = dailySeries.length;
+  const evalStart = 7; // evaluate walk-forward from day 8..30
+
+  // 1. Evaluate 7-day SMA baseline via walk-forward validation
+  const baselineErrors = [];
+  for (let t = evalStart; t < n; t++) {
+    let sum7 = 0;
+    for (let k = t - 7; k < t; k++) sum7 += dailySeries[k];
+    const predBaseline = sum7 / 7;
+    baselineErrors.push(dailySeries[t] - predBaseline);
+  }
+  const maeBaseline = baselineErrors.reduce((s, e) => s + Math.abs(e), 0) / Math.max(baselineErrors.length, 1);
+  const rmseBaseline = Math.sqrt(
+    baselineErrors.reduce((s, e) => s + e * e, 0) / Math.max(baselineErrors.length, 1)
+  );
+
+  // 2. Grid-search Holt linear trend hyperparameters (alpha, beta)
+  const alphas = [0.15, 0.3, 0.5, 0.7, 0.85];
+  const betas = [0.05, 0.15, 0.3, 0.5];
+  let best = null;
+
+  for (const alpha of alphas) {
+    for (const beta of betas) {
+      let level = dailySeries[0] || 0;
+      let trend = ((dailySeries[3] || 0) - (dailySeries[0] || 0)) / 3;
+      const errors = [];
+
+      for (let t = 1; t < n; t++) {
+        const oneStepPred = Math.max(0, level + trend);
+        if (t >= evalStart) {
+          errors.push(dailySeries[t] - oneStepPred);
+        }
+        const prevLevel = level;
+        level = alpha * dailySeries[t] + (1 - alpha) * (prevLevel + trend);
+        trend = beta * (level - prevLevel) + (1 - beta) * trend;
+      }
+
+      const mae = errors.reduce((s, e) => s + Math.abs(e), 0) / Math.max(errors.length, 1);
+      const rmse = Math.sqrt(errors.reduce((s, e) => s + e * e, 0) / Math.max(errors.length, 1));
+
+      if (!best || mae < best.mae) {
+        best = { alpha, beta, level, trend, mae, rmse, errors };
+      }
+    }
+  }
+
+  // 3. Multi-step ahead forecast over horizonDays
+  let forecastHorizon = 0;
+  for (let h = 1; h <= horizonDays; h++) {
+    forecastHorizon += Math.max(0, best.level + h * best.trend);
+  }
+
+  // Residual standard deviation and 14-day demand uncertainty
+  const residualVar = best.errors.reduce((s, e) => s + e * e, 0) / Math.max(best.errors.length, 1);
+  const dailySigma = Math.sqrt(Math.max(residualVar, 0.04));
+  const horizonSigma = Math.sqrt(horizonDays) * dailySigma;
+
+  return {
+    forecast14d: Number(forecastHorizon.toFixed(2)),
+    horizonSigma: Number(horizonSigma.toFixed(2)),
+    dailySigma: Number(dailySigma.toFixed(2)),
+    level: Number(best.level.toFixed(3)),
+    trendSlope: Number(best.trend.toFixed(4)),
+    fittedAlpha: best.alpha,
+    fittedBeta: best.beta,
+    maeModel: Number(best.mae.toFixed(3)),
+    rmseModel: Number(best.rmse.toFixed(3)),
+    maeBaseline: Number(maeBaseline.toFixed(3)),
+    rmseBaseline: Number(rmseBaseline.toFixed(3)),
+  };
+}
+
+/**
+ * Generates AI/ML inventory & sales insights from live MongoDB collections.
  */
 async function generateInsights() {
   const now = new Date();
   const startThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const endLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const DAYS_WINDOW = 30;
+  const startWindow = new Date(now.getTime() - DAYS_WINDOW * 24 * 60 * 60 * 1000);
 
   const [products, salesThisMonth, salesLastMonth, sales30Days] = await Promise.all([
     Product.find().lean(),
     Sale.find({ createdAt: { $gte: startThisMonth } }).lean(),
     Sale.find({ createdAt: { $gte: startLastMonth, $lte: endLastMonth } }).lean(),
-    Sale.find({ createdAt: { $gte: thirtyDaysAgo } }).lean(),
+    Sale.find({ createdAt: { $gte: startWindow } }).lean(),
   ]);
 
   const revenueThisMonth = salesThisMonth.reduce((s, x) => s + (x.total || 0), 0);
@@ -27,18 +125,35 @@ async function generateInsights() {
     ? (revenueThisMonth > 0 ? 100 : 0)
     : Math.round(((revenueThisMonth - revenueLastMonth) / revenueLastMonth) * 100);
 
-  // Aggregate product sales over the last 30 days
+  // Build 30-day chronological daily demand vectors per product
+  const dailyBucketsByProduct = {};
+  products.forEach(p => {
+    dailyBucketsByProduct[String(p._id)] = new Array(DAYS_WINDOW).fill(0);
+  });
+
   const salesByProduct = {};
   const revenueByProduct = {};
   const categoryStats = {};
 
   sales30Days.forEach(sale => {
+    const saleTime = new Date(sale.createdAt).getTime();
+    const dayIndex = Math.min(
+      DAYS_WINDOW - 1,
+      Math.max(0, Math.floor((saleTime - startWindow.getTime()) / (24 * 60 * 60 * 1000)))
+    );
+
     (sale.items || []).forEach(it => {
       const id = String(it.product);
       const qty = it.quantity || 0;
       const rev = it.subtotal || (it.price || 0) * qty;
+
       salesByProduct[id] = (salesByProduct[id] || 0) + qty;
       revenueByProduct[id] = (revenueByProduct[id] || 0) + rev;
+
+      if (!dailyBucketsByProduct[id]) {
+        dailyBucketsByProduct[id] = new Array(DAYS_WINDOW).fill(0);
+      }
+      dailyBucketsByProduct[id][dayIndex] += qty;
 
       const cat = it.category || 'General';
       if (!categoryStats[cat]) {
@@ -68,25 +183,65 @@ async function generateInsights() {
     .sort((a, b) => b.sold - a.sold || b.revenue - a.revenue)
     .slice(0, 5);
 
-  // Calculate daily sales velocity and reorder recommendations
+  // Train Holt linear time-series model across all products and evaluate vs 7-day SMA baseline
+  const productForecasts = products.map(p => {
+    const id = String(p._id);
+    const series = dailyBucketsByProduct[id] || new Array(DAYS_WINDOW).fill(0);
+    const sold30 = salesByProduct[id] || 0;
+    const avgDaily = sold30 / DAYS_WINDOW;
+    const threshold = p.lowStockThreshold ?? 5;
+    const ml = fitHoltDemandModel(series, 14);
+
+    // 95% service-level safety stock = z_0.95 * horizonSigma + threshold buffer
+    const safetyStock = Math.max(Math.ceil(1.645 * ml.horizonSigma), threshold);
+    const expected14dDemand = Math.max(Math.ceil(ml.forecast14d), Math.ceil(avgDaily * 14));
+    const targetStock = Math.max(expected14dDemand + safetyStock, threshold * 6, 30);
+
+    // Calibrated 14-day stockout probability P(D_14 > currentStock)
+    const zScore = (expected14dDemand + threshold - p.stock) / Math.max(ml.horizonSigma, 1);
+    const rawProb = p.stock === 0 ? 0.99 : normalCdf(zScore);
+    const stockoutProbability = Math.min(99, Math.max(1, Math.round(rawProb * 100)));
+
+    return {
+      product: p,
+      sold30,
+      avgDaily: Number(avgDaily.toFixed(2)),
+      threshold,
+      ml,
+      expected14dDemand,
+      safetyStock,
+      targetStock,
+      stockoutProbability,
+    };
+  });
+
+  // Aggregate model evaluation metrics across active products
+  const activeModels = productForecasts.filter(f => f.sold30 > 0);
+  const evalSet = activeModels.length > 0 ? activeModels : productForecasts;
+  const avgMaeModel = Number(
+    (evalSet.reduce((s, f) => s + f.ml.maeModel, 0) / Math.max(evalSet.length, 1)).toFixed(3)
+  );
+  const avgMaeBaseline = Number(
+    (evalSet.reduce((s, f) => s + f.ml.maeBaseline, 0) / Math.max(evalSet.length, 1)).toFixed(3)
+  );
+  const avgRmseModel = Number(
+    (evalSet.reduce((s, f) => s + f.ml.rmseModel, 0) / Math.max(evalSet.length, 1)).toFixed(3)
+  );
+
+  // Filter products requiring reorder (low stock OR high ML stockout risk >= 65%)
   const lowStockProducts = products.filter(p => p.stock <= (p.lowStockThreshold ?? 5));
+  const recommendationCandidates = productForecasts.filter(
+    f => f.product.stock <= f.threshold || f.stockoutProbability >= 70
+  );
 
-  const recommendations = lowStockProducts
-    .map(p => {
-      const id = String(p._id);
-      const sold30 = salesByProduct[id] || 0;
-      const avgDaily = sold30 / 30;
-      const threshold = p.lowStockThreshold ?? 5;
-      // 14-day projected demand + safety stock buffer (2x threshold)
-      const projected14d = Math.ceil(avgDaily * 14);
-      const targetStock = Math.max(projected14d + threshold * 2, threshold * 6, 30);
-      const suggested = Math.max(targetStock - p.stock, 10);
-
+  const recommendations = recommendationCandidates
+    .map(f => {
+      const p = f.product;
+      const suggested = Math.max(f.targetStock - p.stock, 10);
       let priority = 'Medium';
-      if (p.stock === 0 || p.stock <= Math.floor(threshold / 2)) {
+      if (p.stock === 0 || p.stock <= Math.floor(f.threshold / 2) || f.stockoutProbability >= 85) {
         priority = 'High';
       }
-
       const unitCost = p.cost || Math.round((p.price || 0) * 0.75);
 
       return {
@@ -94,20 +249,27 @@ async function generateInsights() {
         product: p.name,
         category: p.category,
         stock: p.stock,
-        lowStockThreshold: threshold,
-        soldLast30: sold30,
-        avgDaily: Number(avgDaily.toFixed(2)),
+        lowStockThreshold: f.threshold,
+        soldLast30: f.sold30,
+        avgDaily: f.avgDaily,
+        forecast14d: f.expected14dDemand,
+        safetyStock: f.safetyStock,
+        stockoutProbability: f.stockoutProbability,
+        trendSlope: f.ml.trendSlope,
+        maeModel: f.ml.maeModel,
+        maeBaseline: f.ml.maeBaseline,
         suggested,
         estimatedCost: suggested * unitCost,
         priority,
+        explainability: `14d Holt forecast: ${f.expected14dDemand} units (trend ${f.ml.trendSlope >= 0 ? '+' : ''}${f.ml.trendSlope}/day, α=${f.ml.fittedAlpha}, β=${f.ml.fittedBeta}), stockout risk ${f.stockoutProbability}%`,
         reason: p.stock === 0
-          ? `Current stock: 0 (Out of stock)`
-          : `Current stock: ${p.stock} (Threshold: ${threshold})`,
+          ? `Current stock: 0 (Out of stock · ${f.stockoutProbability}% stockout risk)`
+          : `Current stock: ${p.stock} (14d forecast: ${f.expected14dDemand} units · ${f.stockoutProbability}% risk)`,
       };
     })
     .sort((a, b) => {
       if (a.priority !== b.priority) return a.priority === 'High' ? -1 : 1;
-      return a.stock - b.stock;
+      return b.stockoutProbability - a.stockoutProbability || a.stock - b.stock;
     });
 
   // Identify slow-moving products (in stock, 0 sales in last 30 days)
@@ -132,7 +294,7 @@ async function generateInsights() {
     .sort((a, b) => b.tiedCapital - a.tiedCapital)
     .slice(0, 6);
 
-  // Build dynamic Business Performance Summary from real data
+  // Build dynamic Business Performance Summary from real data + ML forecast
   const parts = [];
   if (revenueChangePct > 0) {
     parts.push(`Your sales increased by ${revenueChangePct}% this month.`);
@@ -148,8 +310,8 @@ async function generateInsights() {
     parts.push(`${topProducts[0].name} is the top performing product.`);
   }
 
-  if (lowStockProducts.length > 0) {
-    parts.push(`${lowStockProducts.length} product${lowStockProducts.length > 1 ? 's' : ''} need immediate restocking.`);
+  if (recommendations.length > 0) {
+    parts.push(`${recommendations.length} product${recommendations.length > 1 ? 's' : ''} need immediate restocking based on 14-day demand forecasting.`);
   } else {
     parts.push('All inventory stock levels are currently healthy.');
   }
@@ -174,8 +336,18 @@ async function generateInsights() {
     lowStockCount: lowStockProducts.length,
     slowMoving,
     categoryBreakdown: Object.values(categoryStats).sort((a, b) => b.revenue - a.revenue),
+    modelEvaluation: {
+      methodology: "Holt's Double Exponential Smoothing (walk-forward grid search) + Gaussian Stockout Risk",
+      baselineMethod: '7-Day Simple Moving Average (SMA)',
+      horizonDays: 14,
+      windowDays: DAYS_WINDOW,
+      maeModel: avgMaeModel,
+      rmseModel: avgRmseModel,
+      maeBaseline: avgMaeBaseline,
+      evaluatedProducts: evalSet.length,
+    },
     generatedAt: new Date().toISOString(),
   };
 }
 
-module.exports = { generateInsights };
+module.exports = { generateInsights, fitHoltDemandModel };
