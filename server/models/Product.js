@@ -6,8 +6,25 @@ const productSchema = new mongoose.Schema({
   category: { type: String, required: true, index: true },
   price: { type: Number, required: true, min: 0 },
   cost: { type: Number, default: 0, min: 0 },
-  stock: { type: Number, required: true, min: 0, default: 0 },
-  lowStockThreshold: { type: Number, default: 5, min: 0 },
+  stock: {
+    type: Number,
+    required: true,
+    min: 0,
+    default: 0,
+    validate: {
+      validator: Number.isInteger,
+      message: 'Stock must be a non-negative integer',
+    },
+  },
+  lowStockThreshold: {
+    type: Number,
+    default: 5,
+    min: 0,
+    validate: {
+      validator: Number.isInteger,
+      message: 'Low-stock threshold must be a non-negative integer',
+    },
+  },
   description: String,
   image: String,
 }, { timestamps: true });

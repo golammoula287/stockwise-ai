@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const { body, validationResult } = require('express-validator');
 const Product = require('../models/Product');
 const StockLog = require('../models/StockLog');
+const Sale = require('../models/Sale');
 const { protect, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
@@ -52,7 +53,7 @@ router.get('/stock-history', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   try {
-    const { search, category, status, page = 1, limit = 10 } = req.query;
+    const { search, category, status, lowStockOnly, page = 1, limit = 10 } = req.query;
     const q = {};
     if (search && search.trim()) {
       q.$or = [
@@ -71,7 +72,9 @@ router.get('/', async (req, res, next) => {
       status: computeStatus(p),
     }));
 
-    if (status && status !== 'All Status' && status !== 'All') {
+    if (lowStockOnly === 'true') {
+      products = products.filter(p => p.stock <= (p.lowStockThreshold ?? 5));
+    } else if (status && status !== 'All Status' && status !== 'All') {
       products = products.filter(p => p.status === status);
     }
 
@@ -109,6 +112,7 @@ router.post('/', protect, adminOnly, [
   body('category').notEmpty().trim().withMessage('Category is required'),
   body('price').isFloat({ min: 0 }).withMessage('Price must be a non-negative number'),
   body('stock').isInt({ min: 0 }).withMessage('Stock must be a non-negative integer'),
+  body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('Low-stock threshold must be an integer >= 0'),
 ], async (req, res, next) => {
   try {
     const errors = validationResult(req);
@@ -117,10 +121,10 @@ router.post('/', protect, adminOnly, [
     }
     const { name, category, price, cost, stock, lowStockThreshold, description, image, sku } = req.body;
     const doc = await Product.create({
-      name,
-      category,
+      name: name.trim(),
+      category: category.trim(),
       price: Number(price),
-      cost: cost !== undefined ? Number(cost) : Math.round(Number(price) * 0.75),
+      cost: cost !== undefined && cost !== '' ? Number(cost) : Math.round(Number(price) * 0.75),
       stock: Number(stock),
       lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 5,
       description,
@@ -150,6 +154,7 @@ router.put('/:id', protect, adminOnly, [
   body('name').optional().notEmpty().trim().withMessage('Product name cannot be empty'),
   body('price').optional().isFloat({ min: 0 }).withMessage('Price must be >= 0'),
   body('stock').optional().isInt({ min: 0 }).withMessage('Stock must be an integer >= 0'),
+  body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('Threshold must be an integer >= 0'),
 ], async (req, res, next) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -159,21 +164,40 @@ router.put('/:id', protect, adminOnly, [
     if (!errors.isEmpty()) {
       return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
     }
-    const existing = await Product.findById(req.params.id);
-    if (!existing) return res.status(404).json({ message: 'Product not found' });
 
-    const prevStock = existing.stock;
-    const updated = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    const updateFields = {};
+    const allowed = ['name', 'category', 'price', 'cost', 'stock', 'lowStockThreshold', 'description', 'image', 'sku'];
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        updateFields[key] = req.body[key];
+      }
+    }
+    if (updateFields.stock !== undefined) {
+      const parsedStock = Number(updateFields.stock);
+      if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+        return res.status(400).json({ message: 'Stock must be a non-negative integer' });
+      }
+      updateFields.stock = parsedStock;
+    }
 
-    if (req.body.stock !== undefined && Number(req.body.stock) !== prevStock) {
-      const diff = updated.stock - prevStock;
+    const beforeDoc = await Product.findOneAndUpdate(
+      { _id: req.params.id },
+      { $set: updateFields },
+      { new: false, runValidators: true }
+    );
+    if (!beforeDoc) return res.status(404).json({ message: 'Product not found' });
+
+    const updated = await Product.findById(req.params.id);
+
+    if (updateFields.stock !== undefined && updateFields.stock !== beforeDoc.stock) {
+      const diff = updated.stock - beforeDoc.stock;
       await StockLog.create({
         product: updated._id,
         productName: updated.name,
         category: updated.category,
         type: diff > 0 ? 'restock' : 'adjustment',
         change: diff,
-        previousStock: prevStock,
+        previousStock: beforeDoc.stock,
         newStock: updated.stock,
         note: req.body.note || 'Manual product edit',
         performedBy: req.user._id,
@@ -192,24 +216,33 @@ router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
     const { delta, note } = req.body;
-    if (typeof delta !== 'number' || Number.isNaN(delta) || delta === 0) {
-      return res.status(400).json({ message: 'Non-zero numeric delta is required' });
+    if (typeof delta !== 'number' || !Number.isInteger(delta) || delta === 0) {
+      return res.status(400).json({ message: 'Stock adjustment delta must be a non-zero integer' });
     }
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: 'Product not found' });
 
-    const prevStock = product.stock;
-    const newStock = prevStock + delta;
-    if (newStock < 0) {
+    const filter = delta < 0
+      ? { _id: req.params.id, stock: { $gte: Math.abs(delta) } }
+      : { _id: req.params.id };
+
+    const beforeDoc = await Product.findOneAndUpdate(
+      filter,
+      { $inc: { stock: delta } },
+      { new: false }
+    );
+
+    if (!beforeDoc) {
+      const exists = await Product.exists({ _id: req.params.id });
+      if (!exists) return res.status(404).json({ message: 'Product not found' });
       return res.status(400).json({ message: 'Stock cannot go negative' });
     }
-    product.stock = newStock;
-    await product.save();
+
+    const prevStock = beforeDoc.stock;
+    const newStock = prevStock + delta;
 
     await StockLog.create({
-      product: product._id,
-      productName: product.name,
-      category: product.category,
+      product: beforeDoc._id,
+      productName: beforeDoc.name,
+      category: beforeDoc.category,
       type: delta > 0 ? 'restock' : 'adjustment',
       change: delta,
       previousStock: prevStock,
@@ -218,7 +251,8 @@ router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
       performedBy: req.user._id,
     });
 
-    res.json(product);
+    const updated = await Product.findById(req.params.id);
+    res.json(updated);
   } catch (err) {
     next(err);
   }
@@ -229,8 +263,15 @@ router.delete('/:id', protect, adminOnly, async (req, res, next) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
+    const hasSales = await Sale.exists({ 'items.product': req.params.id });
+    if (hasSales) {
+      return res.status(400).json({
+        message: 'Cannot delete a product with recorded sales history. Adjust its stock to 0 instead.',
+      });
+    }
     const del = await Product.findByIdAndDelete(req.params.id);
     if (!del) return res.status(404).json({ message: 'Product not found' });
+    await StockLog.deleteMany({ product: del._id });
     res.json({ message: 'Product deleted successfully', id: del._id });
   } catch (err) {
     next(err);
