@@ -3,8 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
-  const [email, setEmail] = useState('admin@stockwise.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState('');
   const [info, setInfo] = useState('');
@@ -55,6 +55,7 @@ export default function Login() {
               <input
                 id="login-email"
                 type="email"
+                required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="Email address"
@@ -71,6 +72,7 @@ export default function Login() {
               <input
                 id="login-password"
                 type={showPw ? 'text' : 'password'}
+                required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Password"
@@ -95,7 +97,7 @@ export default function Login() {
             </label>
             <button
               type="button"
-              onClick={() => setInfo('Please contact your system administrator (admin@stockwise.com) to reset your password.')}
+              onClick={() => setInfo('Password resets are managed by your administrator (admin@stockwise.com).')}
               className="text-blue-600 hover:underline font-medium"
             >
               Forgot password?
@@ -121,6 +123,20 @@ export default function Login() {
             {loading ? 'Signing in...' : 'Login'}
           </button>
 
+          <div className="mt-2.5 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('admin@stockwise.com');
+                setPassword('admin123');
+                setErr('');
+              }}
+              className="text-[11px] text-slate-500 hover:text-blue-600 underline"
+            >
+              Fill demo evaluator credentials
+            </button>
+          </div>
+
           <div className="relative my-4 text-center">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-slate-200" />
@@ -130,11 +146,12 @@ export default function Login() {
 
           <button
             type="button"
-            onClick={() => setInfo('Google OAuth is a demo UI option — click Login above to sign in with the pre-filled Admin account.')}
-            className="w-full border border-slate-200 hover:bg-slate-50 rounded-xl py-2.5 flex items-center justify-center gap-2 text-sm font-medium text-slate-700 transition"
+            disabled
+            title="Google OAuth is not configured in this deployment"
+            className="w-full border border-slate-200 bg-slate-50 text-slate-400 rounded-xl py-2.5 flex items-center justify-center gap-2 text-xs font-medium cursor-not-allowed"
           >
-            <span className="font-bold text-blue-600">G</span>
-            <span>Continue with Google</span>
+            <span className="font-bold">G</span>
+            <span>Continue with Google (Unavailable)</span>
           </button>
 
           <p className="text-center text-xs mt-5 text-slate-500">
@@ -156,7 +173,6 @@ export default function Login() {
           </h2>
           <p className="text-slate-500 text-sm mt-3">Everything in one place.</p>
 
-          {/* Clean Inventory & Shelves Illustration */}
           <div className="mt-8 bg-white/80 border border-slate-200/80 rounded-2xl p-6 shadow-sm">
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-amber-100/80 border border-amber-200 h-16 rounded-xl flex flex-col items-center justify-center text-xs font-semibold text-amber-800">
