@@ -1,27 +1,40 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
-const User = require('../models/User');
-const Setting = require('../models/Setting');
+const { getPrisma } = require('../config/db');
 const { protect } = require('../middleware/auth');
 
 const router = express.Router();
 
-async function getOrCreateSetting(userId) {
-  let setting = await Setting.findOne({ user: userId });
+const DEFAULT_PREFERENCES = {
+  lowStockAlerts: true,
+  emailReports: true,
+  autoReorderSuggestions: true,
+  dateFormat: 'MMM DD, YYYY',
+};
+
+async function getOrCreateSetting(prisma, userId) {
+  let setting = await prisma.setting.findUnique({ where: { userId } });
   if (!setting) {
-    setting = await Setting.findOne();
+    setting = await prisma.setting.findFirst();
   }
   if (!setting) {
-    setting = await Setting.create({ user: userId });
+    setting = await prisma.setting.create({
+      data: {
+        userId,
+        preferences: DEFAULT_PREFERENCES,
+      },
+    });
   }
   return setting;
 }
 
 router.get('/', protect, async (req, res, next) => {
   try {
+    const prisma = getPrisma();
     const [user, setting] = await Promise.all([
-      User.findById(req.user._id).select('name email phone businessName role avatar'),
-      getOrCreateSetting(req.user._id),
+      prisma.user.findUnique({ where: { id: req.user.id } }),
+      getOrCreateSetting(prisma, req.user.id),
     ]);
 
     res.json({
@@ -41,12 +54,7 @@ router.get('/', protect, async (req, res, next) => {
         businessPhone: setting.businessPhone || user.phone || '01712345678',
         businessAddress: setting.businessAddress || 'Dhaka, Bangladesh',
       },
-      preferences: setting.preferences || {
-        lowStockAlerts: true,
-        emailReports: true,
-        autoReorderSuggestions: true,
-        dateFormat: 'MMM DD, YYYY',
-      },
+      preferences: setting.preferences || DEFAULT_PREFERENCES,
     });
   } catch (err) {
     next(err);
@@ -78,30 +86,42 @@ router.put('/', protect, [
       preferences,
     } = req.body;
 
-    const user = await User.findById(req.user._id);
-    if (name !== undefined && name.trim()) user.name = name.trim();
-    if (email !== undefined && email.trim()) user.email = email.trim().toLowerCase();
-    if (phone !== undefined) user.phone = phone.trim();
-    if (avatar !== undefined) user.avatar = avatar;
-    if (businessName !== undefined) user.businessName = businessName.trim();
-    await user.save();
+    const prisma = getPrisma();
+    const userUpdate = {};
+    if (name !== undefined && name.trim()) userUpdate.name = name.trim();
+    if (email !== undefined && email.trim()) userUpdate.email = email.trim().toLowerCase();
+    if (phone !== undefined) userUpdate.phone = phone.trim();
+    if (avatar !== undefined) userUpdate.avatar = avatar;
+    if (businessName !== undefined) userUpdate.businessName = businessName.trim();
 
-    const setting = await getOrCreateSetting(req.user._id);
-    if (businessName !== undefined) setting.businessName = businessName.trim();
-    if (currency !== undefined) setting.currency = currency;
-    if (taxRate !== undefined) setting.taxRate = Number(taxRate);
-    if (lowStockThresholdDefault !== undefined) setting.lowStockThresholdDefault = Number(lowStockThresholdDefault);
-    if (businessEmail !== undefined) setting.businessEmail = businessEmail;
-    if (businessPhone !== undefined) setting.businessPhone = businessPhone;
-    if (businessAddress !== undefined) setting.businessAddress = businessAddress;
-    if (preferences && typeof preferences === 'object') {
-      setting.preferences = { ...setting.preferences.toObject?.() || setting.preferences, ...preferences };
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: userUpdate,
+    });
+
+    const existingSetting = await getOrCreateSetting(prisma, req.user.id);
+    const settingData = {};
+    if (businessName !== undefined) settingData.businessName = businessName.trim();
+    if (currency !== undefined) settingData.currency = currency;
+    if (taxRate !== undefined) settingData.taxRate = Number(taxRate);
+    if (lowStockThresholdDefault !== undefined) {
+      settingData.lowStockThresholdDefault = parseInt(lowStockThresholdDefault, 10) || 5;
     }
-    await setting.save();
+    if (businessEmail !== undefined) settingData.businessEmail = businessEmail;
+    if (businessPhone !== undefined) settingData.businessPhone = businessPhone;
+    if (businessAddress !== undefined) settingData.businessAddress = businessAddress;
+    if (preferences && typeof preferences === 'object') {
+      settingData.preferences = { ...(existingSetting.preferences || DEFAULT_PREFERENCES), ...preferences };
+    }
+
+    const setting = await prisma.setting.update({
+      where: { id: existingSetting.id },
+      data: settingData,
+    });
 
     res.json({
       message: 'Settings updated successfully',
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role },
+      user: { id: user.id, _id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role },
       business: {
         name: setting.businessName,
         currency: setting.currency,
@@ -128,13 +148,18 @@ router.put('/password', protect, [
       return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
     }
     const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user._id).select('+password');
-    const ok = await user.comparePassword(currentPassword);
+    const prisma = getPrisma();
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const ok = await bcrypt.compare(currentPassword, user.password);
     if (!ok) {
       return res.status(400).json({ message: 'Current password is incorrect' });
     }
-    user.password = newPassword;
-    await user.save();
+    const rounds = parseInt(process.env.BCRYPT_ROUNDS || '10', 10);
+    const hashedPassword = await bcrypt.hash(newPassword, rounds);
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { password: hashedPassword },
+    });
     res.json({ message: 'Password updated successfully' });
   } catch (err) {
     next(err);

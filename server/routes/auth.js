@@ -1,13 +1,14 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
-const User = require('../models/User');
+const { getPrisma } = require('../config/db');
 const { protect, getJwtSecret } = require('../middleware/auth');
 
 const router = express.Router();
 
 function signToken(user) {
-  return jwt.sign({ id: user._id, role: user.role }, getJwtSecret(), {
+  return jwt.sign({ id: user.id, role: user.role }, getJwtSecret(), {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   });
 }
@@ -22,11 +23,14 @@ router.post('/login', [
       return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
     }
     const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
+    const prisma = getPrisma();
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    });
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
-    const match = await user.comparePassword(password);
+    const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
@@ -34,7 +38,8 @@ router.post('/login', [
     res.json({
       token,
       user: {
-        id: user._id,
+        id: user.id,
+        _id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -65,17 +70,23 @@ router.post('/register', protect, [
       return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
     }
     const { name, email, password, role } = req.body;
-    const exists = await User.findOne({ email: email.toLowerCase().trim() });
+    const prisma = getPrisma();
+    const normalizedEmail = email.toLowerCase().trim();
+    const exists = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (exists) {
       return res.status(400).json({ message: 'Email already in use' });
     }
-    const user = await User.create({
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
-      password,
-      role: role === 'admin' ? 'admin' : 'staff',
+    const rounds = parseInt(process.env.BCRYPT_ROUNDS || '10', 10);
+    const hashedPassword = await bcrypt.hash(password, rounds);
+    const user = await prisma.user.create({
+      data: {
+        name: name.trim(),
+        email: normalizedEmail,
+        password: hashedPassword,
+        role: role === 'admin' ? 'admin' : 'staff',
+      },
     });
-    res.status(201).json({ id: user._id, name: user.name, email: user.email, role: user.role });
+    res.status(201).json({ id: user.id, _id: user.id, name: user.name, email: user.email, role: user.role });
   } catch (err) {
     next(err);
   }
