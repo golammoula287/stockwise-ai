@@ -1,73 +1,176 @@
-const mongoose = require('mongoose');
-const { seedDatabase } = require('../utils/seedData');
+const { PrismaClient } = require('@prisma/client');
 
-let memoryServer = null;
-let connectionPromise = null;
+let prismaInstance = null;
 
-async function connectDB() {
-  if (mongoose.connection.readyState === 1) {
-    return mongoose.connection;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidId(id) {
+  return typeof id === 'string' && UUID_REGEX.test(id);
+}
+
+function computeProductStatus(product) {
+  const stock = Number(product.stock ?? 0);
+  const threshold = Number(product.lowStockThreshold ?? 5);
+  if (stock <= 0) return 'Out of Stock';
+  if (stock <= threshold) return 'Low Stock';
+  return 'In Stock';
+}
+
+function resolveDatabaseUrl(explicitUri) {
+  if (explicitUri) return explicitUri;
+  if (process.env.NODE_ENV === 'test') {
+    return (
+      process.env.TEST_DATABASE_URL ||
+      process.env.DATABASE_URL ||
+      'postgresql://postgres:postgres@localhost:5432/stockwise_test?schema=public'
+    );
   }
-  if (connectionPromise) {
-    return connectionPromise;
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
   }
-
-  connectionPromise = (async () => {
-    const isTest = process.env.NODE_ENV === 'test';
-    const useInMemoryDemo = process.env.USE_IN_MEMORY_DB === 'true';
-
-    if (!isTest && !useInMemoryDemo) {
-      const configuredUri = process.env.MONGO_URI;
-      if (!configuredUri || !configuredUri.trim()) {
-        throw new Error(
-          'MONGO_URI environment variable is required for persistent MongoDB connection. Set MONGO_URI (e.g. MongoDB Atlas) or explicitly set USE_IN_MEMORY_DB=true for a local demo.'
-        );
-      }
-
-      await mongoose.connect(configuredUri.trim(), {
-        autoIndex: true,
-        serverSelectionTimeoutMS: 5000,
-      });
-      console.log('MongoDB connected:', mongoose.connection.host);
-
-      if (process.env.AUTO_SEED === 'true' && process.env.NODE_ENV !== 'production') {
-        await seedDatabase({ force: false });
-      }
-      return mongoose.connection;
-    }
-
-    // Isolated test environment or explicit local demo mode (with replica-set transaction support)
-    const { MongoMemoryReplSet } = require('mongodb-memory-server');
-    memoryServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-    const memUri = memoryServer.getUri();
-    await mongoose.connect(memUri, { autoIndex: true });
-
-    if (!isTest && useInMemoryDemo) {
-      console.log('Explicit local demo mode: connected to MongoMemoryReplSet.');
-      if (process.env.AUTO_SEED !== 'false') {
-        await seedDatabase({ force: false });
-      }
-    }
-    return mongoose.connection;
-  })();
-
-  try {
-    return await connectionPromise;
-  } finally {
-    connectionPromise = null;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('DATABASE_URL environment variable is required in production');
   }
+  return 'postgresql://postgres:postgres@localhost:5432/stockwise?schema=public';
+}
+
+function createPrismaClient(datasourceUrl) {
+  const base = new PrismaClient({
+    datasources: datasourceUrl ? { db: { url: datasourceUrl } } : undefined,
+    log: process.env.PRISMA_LOG === 'true' ? ['query', 'error', 'warn'] : ['error'],
+  });
+
+  return base.$extends({
+    result: {
+      user: {
+        _id: {
+          needs: { id: true },
+          compute(user) {
+            return user.id;
+          },
+        },
+      },
+      product: {
+        _id: {
+          needs: { id: true },
+          compute(product) {
+            return product.id;
+          },
+        },
+        status: {
+          needs: { stock: true, lowStockThreshold: true },
+          compute(product) {
+            return computeProductStatus(product);
+          },
+        },
+      },
+      customer: {
+        _id: {
+          needs: { id: true },
+          compute(customer) {
+            return customer.id;
+          },
+        },
+        totalPurchases: {
+          needs: { totalOrders: true },
+          compute(customer) {
+            return customer.totalOrders;
+          },
+        },
+      },
+      sale: {
+        _id: {
+          needs: { id: true },
+          compute(sale) {
+            return sale.id;
+          },
+        },
+      },
+      saleItem: {
+        _id: {
+          needs: { id: true },
+          compute(item) {
+            return item.id;
+          },
+        },
+        product: {
+          needs: { productId: true },
+          compute(item) {
+            return item.productId;
+          },
+        },
+        productName: {
+          needs: { name: true },
+          compute(item) {
+            return item.name;
+          },
+        },
+        unitPrice: {
+          needs: { price: true },
+          compute(item) {
+            return item.price;
+          },
+        },
+        costPrice: {
+          needs: { cost: true },
+          compute(item) {
+            return item.cost;
+          },
+        },
+      },
+      stockLog: {
+        _id: {
+          needs: { id: true },
+          compute(log) {
+            return log.id;
+          },
+        },
+        product: {
+          needs: { productId: true },
+          compute(log) {
+            return log.productId;
+          },
+        },
+      },
+      setting: {
+        _id: {
+          needs: { id: true },
+          compute(setting) {
+            return setting.id;
+          },
+        },
+      },
+    },
+  });
+}
+
+function getPrisma() {
+  if (!prismaInstance) {
+    const url = resolveDatabaseUrl();
+    prismaInstance = createPrismaClient(url);
+  }
+  return prismaInstance;
+}
+
+async function connectDB(uri) {
+  const url = resolveDatabaseUrl(uri);
+  if (!prismaInstance) {
+    prismaInstance = createPrismaClient(url);
+  }
+  await prismaInstance.$connect();
+  return prismaInstance;
 }
 
 async function disconnectDB() {
-  if (mongoose.connection.readyState !== 0) {
-    await mongoose.connection.close();
-  }
-  if (memoryServer) {
-    await memoryServer.stop();
-    memoryServer = null;
+  if (prismaInstance) {
+    await prismaInstance.$disconnect();
+    prismaInstance = null;
   }
 }
 
 module.exports = connectDB;
 module.exports.connectDB = connectDB;
 module.exports.disconnectDB = disconnectDB;
+module.exports.getPrisma = getPrisma;
+module.exports.isValidId = isValidId;
+module.exports.computeProductStatus = computeProductStatus;
