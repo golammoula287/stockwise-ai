@@ -14,8 +14,16 @@ const {
   fitHoltDemandModel,
   computeCalibratedStockoutProbability,
 } = require('../utils/aiInsights');
+const {
+  pluralize,
+  formatCount,
+  formatUnits,
+  formatItems,
+  formatSignedUnits,
+  calculateInvoiceFinancials,
+} = require('../utils/formatters');
 
-describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification Suite', () => {
+describe('StockWise AI — Comprehensive Security, PostgreSQL, Tax Persistence & AI Verification Suite', () => {
   let adminToken = '';
   let staffToken = '';
   let testMouseId = '';
@@ -65,6 +73,7 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
         '/api/sales',
         '/api/customers',
         '/api/dashboard/stats',
+        '/api/dashboard/notifications',
         '/api/ai/insights',
         '/api/settings',
       ];
@@ -244,7 +253,7 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
           sku: 'TM-001',
           category: 'Accessories',
           price: 1000,
-          cost: 700,
+          cost: 600,
           stock: 20,
           lowStockThreshold: 5,
         });
@@ -365,8 +374,10 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
     });
   });
 
-  describe('5. PostgreSQL Sales Transaction Integrity, Rollback, Tax & Concurrency', () => {
-    it('POST /api/sales deducts product stock atomically and calculates subtotal, discount, tax, total & profit', async () => {
+  describe('5. PostgreSQL Sales Transaction Integrity, Tax Persistence, Rollback & Concurrency (IMP-16)', () => {
+    it('POST /api/sales deducts product stock atomically and persists taxRate & taxAmount with discount (IMP-16)', async () => {
+      // 3 units of Test Mouse (price 1000, cost 600) => subtotal 3000, cost 1800
+      // discount 100 => taxableAmount 2900, 5% tax => taxAmount 145, total 3045, profit 2900 - 1800 = 1100
       const saleRes = await request(app)
         .post('/api/sales')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -379,11 +390,24 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
         });
       expect(saleRes.status).toBe(201);
       expect(saleRes.body.subtotal).toBe(3000);
-      // Net after discount = 2900, 5% tax = 145, total = 3045, cost = 3 * 700 = 2100, profit = 2900 - 2100 = 800
+      expect(saleRes.body.discount).toBe(100);
+      expect(saleRes.body.taxableAmount).toBe(2900);
+      expect(saleRes.body.taxRate).toBe(5);
+      expect(saleRes.body.taxAmount).toBe(145);
       expect(saleRes.body.tax).toBe(145);
       expect(saleRes.body.total).toBe(3045);
-      expect(saleRes.body.profit).toBe(800);
+      expect(saleRes.body.profit).toBe(1100);
+      expect(saleRes.body.isLegacyTax).toBe(false);
       expect(saleRes.body.invoiceNumber).toMatch(/^INV-\d+$/);
+
+      // Verify persisted taxRate and taxAmount on GET /api/sales/:id
+      const getSaleRes = await request(app)
+        .get(`/api/sales/${saleRes.body._id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(getSaleRes.status).toBe(200);
+      expect(getSaleRes.body.taxRate).toBe(5);
+      expect(getSaleRes.body.taxAmount).toBe(145);
+      expect(getSaleRes.body.total).toBe(3045);
 
       const prodRes = await request(app)
         .get(`/api/products/${testMouseId}`)
@@ -395,6 +419,83 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
         .set('Authorization', `Bearer ${adminToken}`);
       expect(custRes.body.customer.totalSpent).toBe(3045);
       expect(custRes.body.customer.totalOrders).toBe(1);
+    });
+
+    it('preserves historical invoice tax snapshots when Business Settings taxRate changes later and supports zero tax & legacy null state (IMP-16)', async () => {
+      // 1. Set Business Settings taxRate to 5%
+      await request(app)
+        .put('/api/settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ taxRate: 5 });
+
+      // 2. Create Sale A (1 unit of Test Mouse = 1000, cost = 600, no explicit taxRate in payload -> snapshots 5% from Settings)
+      // Matches verified example: Subtotal BDT 1,000, Discount BDT 0, Applied tax 5% (50), Total BDT 1,050, Profit BDT 400
+      const saleARes = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          items: [{ product: testMouseId, quantity: 1 }],
+          paymentMethod: 'cash',
+        });
+      expect(saleARes.status).toBe(201);
+      expect(saleARes.body.subtotal).toBe(1000);
+      expect(saleARes.body.discount).toBe(0);
+      expect(saleARes.body.taxRate).toBe(5);
+      expect(saleARes.body.taxAmount).toBe(50);
+      expect(saleARes.body.total).toBe(1050);
+      expect(saleARes.body.profit).toBe(400);
+
+      // 3. Change Business Settings taxRate to 12.5%
+      await request(app)
+        .put('/api/settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ taxRate: 12.5 });
+
+      // 4. Create Sale B with explicit zero tax (taxRate: 0)
+      const saleZeroTax = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          items: [{ product: testMouseId, quantity: 1 }],
+          taxRate: 0,
+          paymentMethod: 'card',
+        });
+      expect(saleZeroTax.status).toBe(201);
+      expect(saleZeroTax.body.taxRate).toBe(0);
+      expect(saleZeroTax.body.taxAmount).toBe(0);
+      expect(saleZeroTax.body.total).toBe(1000);
+      expect(saleZeroTax.body.profit).toBe(400);
+
+      // 5. Re-fetch Sale A and verify its persisted 5% tax snapshot did NOT change when Settings changed to 12.5%
+      const checkSaleA = await request(app)
+        .get(`/api/sales/${saleARes.body._id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(checkSaleA.status).toBe(200);
+      expect(checkSaleA.body.taxRate).toBe(5);
+      expect(checkSaleA.body.taxAmount).toBe(50);
+      expect(checkSaleA.body.total).toBe(1050);
+      expect(checkSaleA.body.profit).toBe(400);
+
+      // 6. Verify pre-migration legacy seeded invoices retain null taxRate & taxAmount (no fabricated tax)
+      const allSalesRes = await request(app)
+        .get('/api/sales?search=INV-1001')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(allSalesRes.status).toBe(200);
+      const legacyInv = allSalesRes.body.sales.find(s => s.invoiceNumber === 'INV-1001');
+      expect(legacyInv).toBeDefined();
+      expect(legacyInv.taxRate).toBeNull();
+      expect(legacyInv.taxAmount).toBeNull();
+      expect(legacyInv.isLegacyTax).toBe(true);
+
+      // Reset Settings taxRate to 0 and restock Test Mouse by +2 back to 17 for subsequent tests
+      await request(app)
+        .put('/api/settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ taxRate: 0 });
+      await request(app)
+        .patch(`/api/products/${testMouseId}/stock`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ delta: 2, note: 'Restore stock after tax snapshot test' });
     });
 
     it('POST /api/sales merges duplicate product entries in a single request', async () => {
@@ -419,7 +520,7 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
       expect(prodRes.body.stock).toBe(15);
     });
 
-    it('POST /api/sales rejects invalid quantity, excessive discount, and invalid paymentMethod', async () => {
+    it('POST /api/sales rejects invalid quantity, excessive discount, invalid taxRate, and invalid paymentMethod', async () => {
       const badQty = await request(app)
         .post('/api/sales')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -431,6 +532,18 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ items: [{ product: testMouseId, quantity: 1 }], paymentMethod: 'crypto' });
       expect(badPay.status).toBe(400);
+
+      const badTaxNeg = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ items: [{ product: testMouseId, quantity: 1 }], taxRate: -5 });
+      expect(badTaxNeg.status).toBe(400);
+
+      const badTaxOver = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ items: [{ product: testMouseId, quantity: 1 }], taxRate: 150 });
+      expect(badTaxOver.status).toBe(400);
 
       const badDiscount = await request(app)
         .post('/api/sales')
@@ -517,13 +630,48 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
     });
   });
 
-  describe('6. Dashboard Date Filtering & AI/ML Demand Forecasting Verification (IMP-01, IMP-02, IMP-03, IMP-05)', () => {
+  describe('6. Dashboard Date Filtering, AI/ML Demand Forecasting & Formatting Utilities (IMP-01, IMP-02, IMP-03, IMP-05, IMP-15)', () => {
+    it('formats singular/plural units, items, and monetary values accurately (IMP-15 & IMP-16)', () => {
+      expect(pluralize(0, 'unit')).toBe('units');
+      expect(pluralize(1, 'unit')).toBe('unit');
+      expect(pluralize(2, 'unit')).toBe('units');
+      expect(formatUnits(0)).toBe('0 units');
+      expect(formatUnits(1)).toBe('1 unit');
+      expect(formatUnits(2)).toBe('2 units');
+      expect(formatUnits(1, '~')).toBe('~1 unit');
+      expect(formatUnits(2, '~')).toBe('~2 units');
+      expect(formatItems(0)).toBe('0 items');
+      expect(formatItems(1)).toBe('1 item');
+      expect(formatItems(2)).toBe('2 items');
+      expect(formatSignedUnits(1)).toBe('+1 unit');
+      expect(formatSignedUnits(-1)).toBe('-1 unit');
+      expect(formatSignedUnits(10)).toBe('+10 units');
+      expect(formatCount(4, 'product is', 'products are')).toBe('4 products are');
+
+      const fin = calculateInvoiceFinancials({
+        subtotal: 1000,
+        discount: 0,
+        totalCost: 600,
+        taxRate: 5,
+      });
+      expect(fin).toEqual({
+        subtotal: 1000,
+        discount: 0,
+        taxableAmount: 1000,
+        taxRate: 5,
+        taxAmount: 50,
+        total: 1050,
+        totalCost: 600,
+        profit: 400,
+      });
+    });
+
     it('GET /api/dashboard/stats and /sales-overview support dateFilter & range without fake baseline numbers (IMP-05)', async () => {
       const statsMonth = await request(app)
         .get('/api/dashboard/stats?dateFilter=This%20Month')
         .set('Authorization', `Bearer ${adminToken}`);
       expect(statsMonth.status).toBe(200);
-      expect(statsMonth.body.totalProducts).toBeGreaterThanOrEqual(10);
+      expect(statsMonth.body.totalProducts).toBeGreaterThanOrEqual(8);
       expect(statsMonth.body.totalRevenue).toBeGreaterThan(0);
 
       const chartYear = await request(app)
@@ -540,7 +688,6 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
     });
 
     it('calibrates stockout probability accurately for zero-demand (IMP-01), parity (IMP-02), and sparse series', async () => {
-      // IMP-01: USB-C Hub (stock 3, forecast 0, sold30 0) must NOT report 98% stockout risk
       const zeroDemandProb = computeCalibratedStockoutProbability({
         stock: 3,
         forecast14dContinuous: 0,
@@ -549,7 +696,6 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
       });
       expect(zeroDemandProb).toBeLessThanOrEqual(15);
 
-      // IMP-02: Parity (stock = 15, forecast = 15) must report 50% (not 90%)
       const parityProb = computeCalibratedStockoutProbability({
         stock: 15,
         forecast14dContinuous: 15,
@@ -558,19 +704,19 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
       });
       expect(parityProb).toBe(50);
 
-      // Negative trend series must never produce negative demand predictions
       const decliningSeries = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
       const fitDeclining = fitHoltDemandModel(decliningSeries, 14);
       expect(fitDeclining.forecast14dContinuous).toBeGreaterThanOrEqual(0);
       expect(fitDeclining.forecast14d).toBeGreaterThanOrEqual(0);
     });
 
-    it('GET /api/ai/insights computes calibrated Holt demand forecasts, separates threshold vs forecast triggers (IMP-03), and reports MAE evaluation', async () => {
+    it('GET /api/ai/insights computes calibrated Holt demand forecasts, separates threshold vs forecast triggers (IMP-03), and avoids "1 units" grammar bugs (IMP-15)', async () => {
       const aiRes = await request(app)
         .get('/api/ai/insights')
         .set('Authorization', `Bearer ${adminToken}`);
       expect(aiRes.status).toBe(200);
       expect(typeof aiRes.body.summary).toBe('string');
+      expect(aiRes.body.recommendationState).toBe('enabled');
       expect(aiRes.body.modelEvaluation).toBeDefined();
       expect(typeof aiRes.body.modelEvaluation.maeModel).toBe('number');
       expect(typeof aiRes.body.modelEvaluation.maeBaseline).toBe('number');
@@ -583,11 +729,18 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
       expect(usbHub.forecast14d).toBe(0);
       expect(usbHub.stockoutProbability).toBeLessThan(20);
       expect(usbHub.triggerType).toBe('threshold');
+
+      // Ensure no recommendation text contains "1 units" or "~1 units" (IMP-15)
+      for (const rec of aiRes.body.recommendations) {
+        expect(rec.explainability).not.toMatch(/\b1 units\b/);
+        expect(rec.explainability).not.toMatch(/~1 units\b/);
+        expect(rec.reason).not.toMatch(/\b1 units\b/);
+      }
     });
   });
 
-  describe('7. Business Settings, Preferences Integration & Password Security (IMP-07)', () => {
-    it('GET & PUT /api/settings persist profile, business config, and connect preferences to backend behavior (IMP-07)', async () => {
+  describe('7. Business Settings, Disabled AI Summary & Disabled Notification States (IMP-07, IMP-17, IMP-18)', () => {
+    it('correctly separates actual low-stock counts from disabled AI suggestions (IMP-17) and disabled notifications (IMP-18)', async () => {
       // Disable lowStockAlerts and autoReorderSuggestions
       const putRes = await request(app)
         .put('/api/settings')
@@ -606,22 +759,44 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
       expect(putRes.body.business.name).toBe('StockWise AI Enterprise');
       expect(putRes.body.business.taxRate).toBe(5);
 
-      // Verify notifications endpoint respects lowStockAlerts: false
+      // Verify IMP-18: GET /api/dashboard/notifications distinguishes disabled state from "All products are well stocked"
       const notifDisabled = await request(app)
         .get('/api/dashboard/notifications')
         .set('Authorization', `Bearer ${adminToken}`);
       expect(notifDisabled.status).toBe(200);
-      expect(notifDisabled.body).toEqual([]);
+      expect(notifDisabled.body.alertsEnabled).toBe(false);
+      expect(notifDisabled.body.status).toBe('disabled');
+      expect(notifDisabled.body.message).toBe('Low-stock notifications are disabled in Preferences.');
+      expect(notifDisabled.body.lowStockCount).toBeGreaterThan(0);
+      expect(notifDisabled.body.notifications).toEqual([]);
 
-      // Verify AI insights respects autoReorderSuggestions: false
+      // Verify Dashboard stats lowStockCount remains independent of notification preference
+      const statsRes = await request(app)
+        .get('/api/dashboard/stats')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(statsRes.status).toBe(200);
+      expect(statsRes.body.lowStockCount).toBe(notifDisabled.body.lowStockCount);
+      expect(statsRes.body.lowStockAlertsEnabled).toBe(false);
+      expect(statsRes.body.notificationsStatus).toBe('disabled');
+      expect(statsRes.body.notificationsMessage).toBe('Low-stock notifications are disabled in Preferences.');
+
+      // Verify IMP-17: GET /api/ai/insights keeps actual thresholdAlertCount accurate while reporting disabled recommendations
       const aiDisabled = await request(app)
         .get('/api/ai/insights')
         .set('Authorization', `Bearer ${adminToken}`);
       expect(aiDisabled.status).toBe(200);
       expect(aiDisabled.body.autoReorderEnabled).toBe(false);
+      expect(aiDisabled.body.recommendationState).toBe('disabled');
       expect(aiDisabled.body.recommendations).toEqual([]);
+      expect(aiDisabled.body.enabledRecommendationCount).toBe(0);
+      expect(aiDisabled.body.lowStockCount).toBeGreaterThan(0);
+      expect(aiDisabled.body.thresholdAlertCount).toBe(aiDisabled.body.lowStockCount);
+      expect(aiDisabled.body.disabledMessage).toMatch(
+        /products are below their low-stock thresholds\. Automated reorder recommendations are disabled in Preferences\./
+      );
+      expect(aiDisabled.body.summary).toContain(aiDisabled.body.disabledMessage);
 
-      // Re-enable preferences
+      // Re-enable preferences and verify active states
       await request(app)
         .put('/api/settings')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -635,7 +810,14 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL & AI Verification 
       const notifEnabled = await request(app)
         .get('/api/dashboard/notifications')
         .set('Authorization', `Bearer ${adminToken}`);
-      expect(notifEnabled.body.length).toBeGreaterThan(0);
+      expect(notifEnabled.status).toBe(200);
+      expect(notifEnabled.body.alertsEnabled).toBe(true);
+      expect(notifEnabled.body.status).toBe('active');
+      expect(notifEnabled.body.notifications.length).toBeGreaterThan(0);
+      // Verify IMP-15 in notification messages (e.g. Limited Edition GPU has 1 unit left -> "1 unit left", not "1 units left")
+      for (const n of notifEnabled.body.notifications) {
+        expect(n.message).not.toMatch(/\b1 units\b/);
+      }
     });
   });
 });
