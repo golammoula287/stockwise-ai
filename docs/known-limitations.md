@@ -1,27 +1,17 @@
-# Known Limitations
+# Known Limitations & Production Considerations
 
-## AI Insights
-- Rule-based engine, not an LLM. Uses aggregations (avg daily sales, stock thresholds) — useful but not predictive ML. No external LLM call by default; OpenAI integration is an optional hook (`AI_PROVIDER=openai` env) not enabled in demo to avoid cost/keys.
-- Slow-moving definition is heuristic (0 sales in 30 days). Seasonal products may be misflagged.
-- Reorder suggestion assumes linear demand; does not account for seasonality or promotions.
-- Business summary sentence is templated from metrics, not free-form generation.
+## 1. AI/ML Forecasting Scope
+- **Statistical Time-Series Model:** The forecasting engine (`server/utils/aiInsights.js`) fits **Holt's Double Exponential Smoothing** ($\alpha, \beta$ selected via walk-forward grid search) per product over a 30-day daily demand window and compares out-of-sample Mean Absolute Error (`maeModel`) against a 7-day Simple Moving Average baseline (`maeBaseline`).
+- **Cold-Start & Sparse History:** For newly created products with fewer than 7 days of sales history, trend estimates have higher variance and rely more heavily on the configured `lowStockThreshold` safety buffer.
+- **Seasonality & External Promotions:** Holt's linear model captures level and linear trend slopes but does not model multi-month holiday seasonality or external marketing campaigns.
 
-## Auth
-- Single Admin role seeded. "Continue with Google" on Login is UI placeholder (OAuth not wired).
-- "Forgot password" triggers toast, no email sending in demo.
-- JWT stored in localStorage (convenient for demo) — httpOnly cookies would be more secure in production.
+## 2. Database & Replica Set Requirement
+- **Multi-Document Transactions Require a Replica Set:** MongoDB ACID transactions (`session.withTransaction` in `POST /api/sales`) require a replica-set topology. MongoDB Atlas clusters (including the M0 free tier) provide a 3-node replica set out of the box. If running a local `mongod` instance, start it with `--replSet rs0` or set `USE_IN_MEMORY_DB=true` for local evaluation with `MongoMemoryReplSet`.
 
-## Inventory
-- Stock deduction uses atomic `findOneAndUpdate` with stock check; without Mongo replica set we cannot use multi-doc transactions, so concurrent sales for same product could still race under very high load. For demo traffic this is sufficient.
-- Stock History tab shows current snapshot; full audit log (who adjusted when) is stored only as Sale records, not a separate ledger.
+## 3. Authentication & Account Provisioning
+- **Email/Password JWT Authentication:** The system uses JWT bearer tokens (`Authorization: Bearer <token>`) signed with `JWT_SECRET`.
+- **Google OAuth:** Third-party Google OAuth is not configured in this deployment; the login button is explicitly disabled in the UI (`Continue with Google (Unavailable)`) to prevent misleading behavior.
+- **Password Reset Delivery:** Self-service email password reset is not wired to an SMTP provider; users are directed to contact the system administrator.
 
-## Performance
-- Pagination implemented but no server-side text index weighting; search is regex, okay for <10k products.
-- Charts use Recharts with mock-friendly data shape; very large datasets should be aggregated monthly on server.
-
-## Deployment
-- Seed data is demo; production should not run `npm run seed` twice without clearing.
-- No file upload handling for product images — URL field only.
-
-## Testing
-- Tests use in-memory Mongo or mocked Mongoose; coverage is core flows, not 100% UI E2E. Playwright E2E is a future improvement.
+## 4. Product Deletion Policy
+- To preserve historical financial and stock-log integrity, products that have appeared in at least one completed `Sale` cannot be hard-deleted via `DELETE /api/products/:id` (`400 Bad Request`). Administrators should set their stock to `0` instead.

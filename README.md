@@ -1,199 +1,105 @@
 # StockWise AI — Smart Inventory & Sales Management
 
-> A simple and powerful system to manage products, sales, customers and inventory with smart AI recommendations.
+> Full-stack inventory, POS checkout, customer tracking, and time-series demand forecasting system built with the MERN stack.
 
-![License](https://img.shields.io/badge/license-MIT-green)
-![Stack](https://img.shields.io/badge/stack-MERN-blue)
-![Status](https://img.shields.io/badge/status-active-success)
-
-### Live Demo
-- Frontend (Vercel): https://stockwise-ai.vercel.app *(add your link after deployment)*
-- Backend (Render): https://stockwise-ai.onrender.com *(add your link after deployment)*
-- API Health: `GET /api/health`
-
-> **Repository:** https://github.com/meherabmehu/stockwise-ai
+**Repository:** [https://github.com/meherabmehu/stockwise-ai](https://github.com/meherabmehu/stockwise-ai)
 
 ---
 
-## Features
+## Overview & Key Features
 
-### 7 Pages Required
-1. **Home (Public)** — Hero with AI Insights, Total Sales / Low Stock / AI Recommendation cards, Features, About, Contact. Responsive nav + CTAs.
-2. **Login** — Email/password, Remember me, Forgot password, Continue with Google (placeholder), Contact Admin for new accounts.
-3. **Dashboard** — Greeting, 4 stat cards (Total Products, Total Sales, Total Revenue ৳, Low Stock), Sales Overview chart, Recent Sales table with date filter.
-4. **Products & Inventory** — CRUD, search, Category/Status filters, tabs (All / Low Stock / Stock History / Categories), stock badges (In Stock / Low Stock / Out of Stock), pagination.
-5. **Sales & Customers** — New Sale POS, Sales History, Customers; Add to cart, quantity controls, automatic stock deduction, customer selector, subtotal/discount/total, Complete Sale.
-6. **AI Insights** — Business Summary, Stock Recommendations with priority, Top Selling Products, sales trend, slow-moving detection — all computed from **real app data**.
-7. **Settings** — Profile / Business / Security / Preferences tabs, avatar, update profile, change password.
+### Seven-Page Frontend Architecture
+1. **Home (`/`) — Public:** Overview of core capabilities, interactive preview cards, Features, About, and Administrator Contact form.
+2. **Login (`/login`):** JWT email/password authentication with input validation, password visibility toggle, and explicit indication that third-party OAuth is disabled.
+3. **Dashboard (`/dashboard`):** KPI summary cards (`Total Products`, `Total Sales`, `Total Revenue & Profit`, `Low Stock Items`), interactive `Sales Overview` area chart (`Recharts`), date/range filters, low-stock alert bell, and `Recent Sales` table.
+4. **Products & Inventory (`/products`):** Paginated product catalog, search, category & status filters, `Low Stock` filter tab, `Stock History` ledger tab, `Categories` valuation tab, Product CRUD modal, and atomic integer stock adjustment modal (`±Stock`).
+5. **Sales & Customers (`/sales`, `/customers`):** Three-column POS checkout with cart management, automatic stock deduction, customer selector, `Sales History` ledger, and `Customers` CRUD with purchase history inspection.
+6. **AI Insights (`/ai-insights`):** Time-series demand forecasting (`Holt's Double Exponential Smoothing`), 14-day stockout probability (`%`), 95% service-level reorder suggestions, slow-moving inventory capital detection, and walk-forward model evaluation (`MAE` vs. 7-day SMA baseline).
+7. **Settings (`/settings`):** Profile management, business configuration (`Currency`, `Tax Rate`, `Low-Stock Threshold`), password update with current-password verification, and notification preferences.
 
-### Backend Capabilities
-- REST APIs with Express + MongoDB (Mongoose)
-- JWT Authentication & Role Authorization (Admin)
-- Product CRUD + Inventory management + Category support
-- Customer CRUD
-- Sales transactions with **automatic stock deduction** (atomic)
-- Revenue & profit calculation
-- Sales analytics & dashboard aggregation
-- Low-stock notifications
-- AI recommendations engine (rule-based on real data)
-- Business settings persistence
-- Input validation (express-validator) + centralized error handling
+### Backend & Database Guarantees
+- **ACID Sales Transactions:** Checkout (`POST /api/sales`) consolidates duplicate product entries, verifies stock atomically, decrements `Product.stock`, increments the `Counter` invoice sequence (`INV-XXXX`), updates `Customer` totals, creates the `Sale` record, and writes `StockLog` audit entries inside a single MongoDB multi-document transaction (`session.withTransaction`).
+- **Persistent MongoDB by Default:** Requires a valid `MONGO_URI` (e.g., MongoDB Atlas replica set) outside automated tests, failing fast on misconfiguration rather than silently losing data in memory.
+- **Stock Integrity:** Enforces integer quantities across schemas and routes, uses atomic conditional `$inc` queries to prevent negative stock under concurrency, and blocks deleting products that have historical sales records.
 
 ---
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|------------|
-| Frontend | React 18 + Vite + React Router 6 + TailwindCSS + Recharts + Axios |
-| Backend | Node.js + Express 4 + Mongoose 7 + JWT + bcryptjs |
-| Database | MongoDB (Atlas or local) |
-| AI | Rule-based insights engine on live collections (no third-party LLM required for core; optional OpenAI hook) |
-| Deployment | Vercel (client) + Render/Railway (server) |
+| :--- | :--- |
+| **Frontend** | React 18, Vite 5, React Router 6, TailwindCSS, Recharts, Axios |
+| **Backend** | Node.js, Express 4, Mongoose 7, JSON Web Tokens (`jsonwebtoken`), `bcryptjs`, `express-validator` |
+| **Database** | MongoDB (MongoDB Atlas or local replica set; `MongoMemoryReplSet` for isolated Jest tests) |
+| **AI / ML** | Walk-forward grid-searched Holt Linear Exponential Smoothing + Gaussian Stockout Risk model (`server/utils/aiInsights.js`) |
+| **Testing** | Jest 29 + Supertest + `mongodb-memory-server` (`MongoMemoryReplSet`) |
 
 ---
 
-## Installation
+## Installation & Running Instructions
 
 ### Prerequisites
 - Node.js 18+
-- MongoDB (local `mongod` or Atlas URI)
-- Git
+- MongoDB Atlas URI or local MongoDB replica set (`MONGO_URI`)
 
-### 1) Clone
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/meherabmehu/stockwise-ai.git
 cd stockwise-ai
 ```
 
-### 2) Backend Setup
+### 2. Configure & Start the Backend
 ```bash
 cd server
 npm install
 cp .env.example .env
-# edit .env with your values
-npm run dev   # http://localhost:5000
-# seed demo data
-npm run seed
+# Edit .env and set MONGO_URI and JWT_SECRET
+# (Optional: set USE_IN_MEMORY_DB=true and AUTO_SEED=true only for an ephemeral local demo)
+npm run seed   # Seeds initial admin account and sample inventory in non-production environments
+npm run dev    # Starts API server on http://localhost:5000
 ```
 
-### 3) Frontend Setup
+### 3. Configure & Start the Frontend
 ```bash
 cd ../client
 npm install
 cp .env.example .env
-npm run dev   # http://localhost:5173
+npm run dev    # Starts Vite dev server on http://localhost:5173
 ```
 
 ---
 
-## Environment Variables
+## AI/ML Demand Forecasting Methodology
 
-### server/.env
-```env
-PORT=5000
-MONGO_URI=mongodb://localhost:27017/stockwise
-JWT_SECRET=change_this_to_a_long_random_string
-JWT_EXPIRES_IN=7d
-CLIENT_URL=http://localhost:5173
-BCRYPT_ROUNDS=10
-```
+Implemented in `server/utils/aiInsights.js` (`GET /api/ai/insights`):
 
-### client/.env
-```env
-VITE_API_URL=http://localhost:5000/api
-```
-
-See `.env.example` in repo root and in each package.
+1. **Input Preparation:** Aggregates historical `Sale` line items over the trailing 30 days into a chronological daily demand vector $y_0, y_1, \dots, y_{29}$ per product.
+2. **Model Training & Selection:** Fits **Holt's Linear Exponential Smoothing** ($\ell_t = \alpha y_t + (1-\alpha)(\ell_{t-1}+b_{t-1})$, $b_t = \beta(\ell_t-\ell_{t-1}) + (1-\beta)b_{t-1}$) per product by grid-searching $(\alpha, \beta)$ to minimize walk-forward one-step-ahead Mean Absolute Error ($\text{MAE}_{\text{model}}$).
+3. **Stockout Risk & Safety Stock:** Projects 14-day cumulative demand $\hat{D}_{14} = \sum_{h=1}^{14} \max(0, \ell_T + h b_T)$, estimates 14-day residual standard deviation $\hat{\sigma}_{14}$, computes 95% service-level safety stock ($1.645\,\hat{\sigma}_{14}$), and calculates calibrated stockout probability $P(D_{14} > \text{stock})$ via the Gaussian CDF.
+4. **Baseline Evaluation:** Compares walk-forward $\text{MAE}_{\text{model}}$ and $\text{RMSE}_{\text{model}}$ against a 7-day Simple Moving Average ($\text{MAE}_{\text{baseline}}$) on the same out-of-sample window and exposes the evaluation metrics in `modelEvaluation`.
 
 ---
 
-## Running
+## Automated Testing
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` in `/server` | Start Express with nodemon |
-| `npm run start` in `/server` | Production start |
-| `npm run dev` in `/client` | Vite dev server |
-| `npm run build` in `/client` | Production build |
-
-API base is `/api`. Health check: `GET /api/health → { ok:true }`.
-
----
-
-## AI Functionality
-
-No hard-coded fake insights. The engine in `server/utils/aiInsights.js` queries live MongoDB:
-
-- **Low-stock recommendations:** `stock <= lowStockThreshold` → reorder suggestion with priority High/Medium
-- **Reorder quantity:** `suggested = max( (avgDailySales * 14) - stock, lowStockThreshold)` using last 30-day sales
-- **Sales trend:** compare `revenueThisMonth vs revenueLastMonth` → % change and narrative
-- **Slow-moving:** products with 0 sales in last 30 days or velocity < 0.2/day
-- **Top performers:** aggregation on `Sale.items`
-- **Business summary:** combined sentence generated from above metrics
-
-Endpoint: `GET /api/ai/insights`
-
-Known limitations documented in `docs/known-limitations.md`.
-
----
-
-## Testing
-
+Run the backend test suite (isolated in-memory MongoDB replica set—never touches production `MONGO_URI`):
 ```bash
 cd server
 npm test
 ```
 
-Uses Jest + Supertest. Tests cover:
-- Auth (valid/invalid login, protected routes)
-- Product CRUD + validation
-- Sale transaction + stock deduction + insufficient stock error
-- Dashboard aggregation
-- AI insights shape
-
-Check `server/tests/`.
-
----
-
-## Project Structure
-
-```
-stockwise-ai/
-├── client/               # React + Vite frontend (7 pages)
-├── server/               # Express + MongoDB backend
-├── docs/
-│   ├── architecture.md
-│   ├── api-documentation.md
-│   ├── database-design.md
-│   ├── demo-checklist.md
-│   └── known-limitations.md
-├── .env.example
-├── .gitignore
-└── README.md
+Verify the frontend production bundle:
+```bash
+cd client
+npm run build
 ```
 
 ---
 
-## Deployment
+## Documentation Index
 
-1. Push `main` to GitHub (see Git Workflow note below).
-2. Import `client` to Vercel, set `VITE_API_URL` to your Render URL + `/api`.
-3. Deploy `server` to Render: Root Directory `server`, Build `npm install`, Start `npm start`, add env vars.
-4. Allow CORS for your Vercel domain.
-
----
-
-## Security Note
-
-**Never commit `.env` or tokens.** This repo's `.gitignore` blocks them. If a token was ever pasted in an issue/chat, revoke it immediately at GitHub → Settings → Developer settings → PATs and generate a new one. Push via `git credential manager` or `gh auth login`, not by embedding `ghp_...` in URLs.
-
----
-
-## Author
-
-Meherab — StockWise AI
-
-## License
-
-MIT
+- [`docs/architecture.md`](docs/architecture.md) — System architecture, transaction flow, and state management
+- [`docs/api-documentation.md`](docs/api-documentation.md) — REST API endpoints, request/response schemas, and error codes
+- [`docs/database-design.md`](docs/database-design.md) — Collections, indexes, relationships, and ACID transaction boundaries
+- [`docs/demo-checklist.md`](docs/demo-checklist.md) — Pre-demo verification steps
+- [`docs/known-limitations.md`](docs/known-limitations.md) — Known constraints and production considerations

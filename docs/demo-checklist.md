@@ -1,67 +1,38 @@
-# Demo Checklist
+# Demo & Verification Checklist
 
-Before recording or live demo, verify:
+## 1. Environment & Database Setup
+- [ ] `server/.env` has `MONGO_URI` (MongoDB Atlas replica set) and a strong `JWT_SECRET` (or `USE_IN_MEMORY_DB=true` for a local sandbox demo)
+- [ ] Run `cd server && npm test` — all 22 automated tests pass
+- [ ] Run `cd client && npm run build` — production bundle compiles with zero errors
 
-### Setup
-- [ ] `server/.env` has correct MONGO_URI and JWT_SECRET
-- [ ] `client/.env` VITE_API_URL points to deployed API
-- [ ] `npm run seed` executed — demo data present
-- [ ] Admin login works: `admin@stockwise.com / admin123`
+## 2. Authentication & Security
+- [ ] Navigate to `/login` — inputs start empty; Google Sign-In button is clearly marked `Unavailable` and disabled
+- [ ] Submitting invalid credentials returns a `401` inline error banner
+- [ ] Signing in with valid admin credentials redirects to `/dashboard`
 
-### Home Page
-- [ ] Hero loads: "Manage Your Inventory & Sales Smarter with AI Insights"
-- [ ] CTAs: Get Started → /login, Learn More scrolls to Features
-- [ ] Feature cards (Easy to Use, AI Powered, Secure, Real-time) visible
-- [ ] Responsive: mobile menu works
+## 3. Dashboard & Analytics
+- [ ] 4 KPI cards (`Total Products`, `Total Sales`, `Total Revenue`, `Low Stock Items`) display live database figures
+- [ ] `Sales Overview` chart and `Recent Sales` table render cleanly
+- [ ] Changing the date range or chart period triggers a fresh API query
+- [ ] Clicking the header notification bell displays current low-stock and out-of-stock alerts
 
-### Login
-- [ ] Valid login redirects to /dashboard
-- [ ] Invalid login shows error (not 500)
-- [ ] "Remember me" persists
-- [ ] Empty fields show validation
+## 4. Products & Inventory
+- [ ] Search input, Category dropdown, and Status dropdown filter products accurately
+- [ ] `Low Stock` tab filters low/out-of-stock products via the backend API
+- [ ] `Stock History` tab displays chronological `initial`, `sale`, `restock`, and `adjustment` logs with `previousStock -> newStock`
+- [ ] `Categories` tab displays product counts, stock units, and total inventory value per category
+- [ ] `±Stock` modal updates stock atomically and rejects negative resulting stock or decimal quantities
 
-### Dashboard
-- [ ] Stats cards show real DB counts (150 etc. after seed)
-- [ ] Sales Overview chart renders (Recharts)
-- [ ] Recent Sales table has 4 rows with dates
-- [ ] Date filter works
+## 5. Sales & Customers (ACID Checkout)
+- [ ] `New Sale` starts with an empty cart
+- [ ] Adding products, adjusting quantities, and clicking `Complete Sale` creates a unique `INV-XXXX` invoice and deducts product stock atomically
+- [ ] Attempting to sell more than available stock returns an inline error and leaves stock unchanged
+- [ ] `Customers` tab lists customers with `Orders` and `Total Spent`, and `History` opens the customer's purchase history modal
 
-### Products & Inventory
-- [ ] Table shows 5 seeded products with badges (In Stock/Low/Out)
-- [ ] Search filters live
-- [ ] Category + Status dropdowns filter
-- [ ] Add Product modal creates and persists
-- [ ] Edit updates, Delete with confirm
-- [ ] Low Stock tab shows only low-stock
-- [ ] Pagination works when >10 items
+## 6. AI/ML Insights
+- [ ] `AI Business Summary` banner reflects live monthly revenue trend and restock counts
+- [ ] `Stock Recommendations` show 14-day Holt forecast units, stockout risk `%`, and priority badge, with working `Restock` button
+- [ ] `Demand Analysis` tab displays slow-moving inventory capital and walk-forward `MAE` evaluation (`Holt Model MAE` vs. `7-Day SMA Baseline MAE`)
 
-### Sales & Customers
-- [ ] Add Products → + button adds to cart
-- [ ] Cart shows 2 items, quantity +/- updates total
-- [ ] Subtotal/Total correct (৳82,500 example)
-- [ ] Select Customer dropdown
-- [ ] Complete Sale decrements stock (verify in Products after)
-- [ ] Insufficient stock shows error
-- [ ] Sales History tab lists new sale
-- [ ] Add New Customer works
-
-### AI Insights
-- [ ] Summary sentence reflects real data (not hardcoded lorem)
-- [ ] Stock Recommendations show priority badges
-- [ ] Top Selling Products chart/bar correct
-- [ ] Slow-moving identified
-- [ ] Refresh after new sale changes insights
-
-### Settings
-- [ ] Profile tab shows J avatar, name, email, phone
-- [ ] Business/Security/Preferences tabs switch
-- [ ] Update Profile persists
-- [ ] Change Password validates current password
-- [ ] Logout redirects to /login
-
-### General
-- [ ] All 7 pages navigable via Sidebar
-- [ ] Loading spinners visible during fetch
-- [ ] Empty states show friendly message
-- [ ] Responsive on tablet/mobile (test 768px, 375px)
-- [ ] No console errors, no token in logs
+## 7. Settings
+- [ ] `Profile`, `Business`, `Security`, and `Preferences` tabs save changes to MongoDB and show inline confirmation banners
