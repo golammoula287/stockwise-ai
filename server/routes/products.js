@@ -5,6 +5,23 @@ const { protect, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
+// All product & inventory endpoints require authentication (IMP-08, IMP-14)
+router.use(protect);
+
+const MAX_MONETARY_VALUE = 100_000_000;
+const MAX_STOCK_VALUE = 10_000_000;
+const SKU_REGEX = /^[A-Za-z0-9._-]+$/;
+
+function roundCurrency(value) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+function normalizeSku(rawSku) {
+  if (rawSku === undefined || rawSku === null) return null;
+  const trimmed = String(rawSku).trim().toUpperCase();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 router.get('/categories', async (req, res, next) => {
   try {
     const prisma = getPrisma();
@@ -17,7 +34,7 @@ router.get('/categories', async (req, res, next) => {
       }
       map[cat].count += 1;
       map[cat].totalStock += p.stock || 0;
-      map[cat].totalValue += (p.price || 0) * (p.stock || 0);
+      map[cat].totalValue = roundCurrency(map[cat].totalValue + (p.price || 0) * (p.stock || 0));
       if (p.stock <= (p.lowStockThreshold ?? 5)) {
         map[cat].lowStockCount += 1;
       }
@@ -31,8 +48,16 @@ router.get('/categories', async (req, res, next) => {
 router.get('/stock-history', async (req, res, next) => {
   try {
     const prisma = getPrisma();
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
+    const where = {};
+    if (req.query.productId && isValidId(String(req.query.productId))) {
+      where.productId = String(req.query.productId);
+    }
+    if (req.query.type && ['initial', 'sale', 'restock', 'adjustment'].includes(String(req.query.type))) {
+      where.type = String(req.query.type);
+    }
     const logs = await prisma.stockLog.findMany({
+      where,
       include: {
         performedBy: { select: { id: true, name: true, email: true } },
       },
@@ -48,7 +73,7 @@ router.get('/stock-history', async (req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     const prisma = getPrisma();
-    const { search, category, status, lowStockOnly, page = 1, limit = 10 } = req.query;
+    const { search, category, status, lowStockOnly, sortBy, page = 1, limit = 10 } = req.query;
     const where = {};
 
     if (search && search.trim()) {
@@ -63,9 +88,17 @@ router.get('/', async (req, res, next) => {
       where.category = category;
     }
 
+    let orderBy = { createdAt: 'asc' };
+    if (sortBy === 'name') orderBy = { name: 'asc' };
+    else if (sortBy === 'price_asc') orderBy = { price: 'asc' };
+    else if (sortBy === 'price_desc') orderBy = { price: 'desc' };
+    else if (sortBy === 'stock_asc') orderBy = { stock: 'asc' };
+    else if (sortBy === 'stock_desc') orderBy = { stock: 'desc' };
+    else if (sortBy === 'newest') orderBy = { createdAt: 'desc' };
+
     const rawProducts = await prisma.product.findMany({
       where,
-      orderBy: { createdAt: 'asc' },
+      orderBy,
     });
 
     let products = rawProducts.map(p => ({
@@ -82,7 +115,7 @@ router.get('/', async (req, res, next) => {
 
     const total = products.length;
     const p = Math.max(parseInt(page, 10) || 1, 1);
-    const l = Math.max(parseInt(limit, 10) || 10, 1);
+    const l = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 200);
     const paginated = products.slice((p - 1) * l, p * l);
 
     res.json({
@@ -110,146 +143,247 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-router.post('/', protect, adminOnly, [
-  body('name').notEmpty().trim().withMessage('Product name is required'),
-  body('category').notEmpty().trim().withMessage('Category is required'),
-  body('price').isFloat({ min: 0 }).withMessage('Price must be a non-negative number'),
-  body('stock').isInt({ min: 0 }).withMessage('Stock must be a non-negative integer'),
-  body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('Low-stock threshold must be an integer >= 0'),
-], async (req, res, next) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
-    }
-    const { name, category, price, cost, stock, lowStockThreshold, description, image, sku } = req.body;
-    const prisma = getPrisma();
-
-    const doc = await prisma.$transaction(async (tx) => {
-      const created = await tx.product.create({
-        data: {
-          name: name.trim(),
-          category: category.trim(),
-          price: Number(price),
-          cost: cost !== undefined && cost !== '' ? Number(cost) : Math.round(Number(price) * 0.75),
-          stock: Number(stock),
-          lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 5,
-          description: description || null,
-          image: image || null,
-          sku: sku ? sku.trim() : null,
-        },
-      });
-
-      await tx.stockLog.create({
-        data: {
-          productId: created.id,
-          productName: created.name,
-          category: created.category,
-          type: 'initial',
-          change: created.stock,
-          previousStock: 0,
-          newStock: created.stock,
-          note: 'Product created',
-          performedById: req.user.id,
-        },
-      });
-
-      return created;
-    });
-
-    res.status(201).json({
-      ...doc,
-      _id: doc.id,
-      status: computeProductStatus(doc),
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.put('/:id', protect, adminOnly, [
-  body('name').optional().notEmpty().trim().withMessage('Product name cannot be empty'),
-  body('price').optional().isFloat({ min: 0 }).withMessage('Price must be >= 0'),
-  body('stock').optional().isInt({ min: 0 }).withMessage('Stock must be an integer >= 0'),
-  body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('Threshold must be an integer >= 0'),
-], async (req, res, next) => {
-  try {
-    if (!isValidId(req.params.id)) {
-      return res.status(400).json({ message: 'Invalid product ID' });
-    }
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
-    }
-
-    const prisma = getPrisma();
-    const existing = await prisma.product.findUnique({ where: { id: req.params.id } });
-    if (!existing) return res.status(404).json({ message: 'Product not found' });
-
-    const updateFields = {};
-    if (req.body.name !== undefined) updateFields.name = String(req.body.name).trim();
-    if (req.body.category !== undefined) updateFields.category = String(req.body.category).trim();
-    if (req.body.price !== undefined) updateFields.price = Number(req.body.price);
-    if (req.body.cost !== undefined && req.body.cost !== '') updateFields.cost = Number(req.body.cost);
-    if (req.body.lowStockThreshold !== undefined) {
-      updateFields.lowStockThreshold = Number(req.body.lowStockThreshold);
-    }
-    if (req.body.description !== undefined) updateFields.description = req.body.description;
-    if (req.body.image !== undefined) updateFields.image = req.body.image;
-    if (req.body.sku !== undefined) updateFields.sku = req.body.sku || null;
-
-    if (req.body.stock !== undefined) {
-      const parsedStock = Number(req.body.stock);
-      if (!Number.isInteger(parsedStock) || parsedStock < 0) {
-        return res.status(400).json({ message: 'Stock must be a non-negative integer' });
+router.post(
+  '/',
+  adminOnly,
+  [
+    body('name').notEmpty().trim().withMessage('Product name is required').isLength({ max: 120 }).withMessage('Product name cannot exceed 120 characters'),
+    body('category').notEmpty().trim().withMessage('Category is required').isLength({ max: 60 }).withMessage('Category cannot exceed 60 characters'),
+    body('price').isFloat({ min: 0, max: MAX_MONETARY_VALUE }).withMessage(`Price must be between 0 and ${MAX_MONETARY_VALUE}`),
+    body('cost').optional({ values: 'falsy' }).isFloat({ min: 0, max: MAX_MONETARY_VALUE }).withMessage(`Cost must be between 0 and ${MAX_MONETARY_VALUE}`),
+    body('stock').isInt({ min: 0, max: MAX_STOCK_VALUE }).withMessage(`Stock must be an integer between 0 and ${MAX_STOCK_VALUE}`),
+    body('lowStockThreshold').optional({ values: 'falsy' }).isInt({ min: 0, max: MAX_STOCK_VALUE }).withMessage('Low-stock threshold must be a non-negative integer'),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
       }
-      updateFields.stock = parsedStock;
-    }
+      const { name, category, price, cost, stock, lowStockThreshold, description, image, sku } = req.body;
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const prod = await tx.product.update({
-        where: { id: req.params.id },
-        data: updateFields,
-      });
+      if (cost !== undefined && cost !== null && cost !== '' && Number(cost) < 0) {
+        return res.status(400).json({ message: 'Cost must be a non-negative number' });
+      }
 
-      if (updateFields.stock !== undefined && updateFields.stock !== existing.stock) {
-        const diff = prod.stock - existing.stock;
+      const normalizedSku = normalizeSku(sku);
+      if (normalizedSku) {
+        if (normalizedSku.length > 64 || !SKU_REGEX.test(normalizedSku)) {
+          return res.status(400).json({
+            message: 'SKU may only contain letters, numbers, hyphens, underscores, and periods (max 64 chars)',
+          });
+        }
+      }
+
+      const prisma = getPrisma();
+
+      if (normalizedSku) {
+        const duplicateSku = await prisma.product.findFirst({
+          where: { sku: { equals: normalizedSku, mode: 'insensitive' } },
+        });
+        if (duplicateSku) {
+          return res.status(400).json({ message: `A product with SKU "${normalizedSku}" already exists` });
+        }
+      }
+
+      // Use business setting default low-stock threshold if not explicitly specified
+      let resolvedThreshold = 5;
+      if (lowStockThreshold !== undefined && lowStockThreshold !== null && lowStockThreshold !== '') {
+        resolvedThreshold = Number(lowStockThreshold);
+      } else {
+        const setting = await prisma.setting.findFirst({ where: { userId: req.user.id } });
+        if (setting && typeof setting.lowStockThresholdDefault === 'number') {
+          resolvedThreshold = setting.lowStockThresholdDefault;
+        }
+      }
+
+      const cleanPrice = roundCurrency(price);
+      const cleanCost =
+        cost !== undefined && cost !== null && cost !== ''
+          ? roundCurrency(cost)
+          : roundCurrency(cleanPrice * 0.75);
+
+      const doc = await prisma.$transaction(async (tx) => {
+        const created = await tx.product.create({
+          data: {
+            name: String(name).trim(),
+            category: String(category).trim(),
+            price: cleanPrice,
+            cost: cleanCost,
+            stock: Number(stock),
+            lowStockThreshold: resolvedThreshold,
+            description: description ? String(description).trim() : null,
+            image: image || null,
+            sku: normalizedSku,
+          },
+        });
+
         await tx.stockLog.create({
           data: {
-            productId: prod.id,
-            productName: prod.name,
-            category: prod.category,
-            type: diff > 0 ? 'restock' : 'adjustment',
-            change: diff,
-            previousStock: existing.stock,
-            newStock: prod.stock,
-            note: req.body.note || 'Manual product edit',
+            productId: created.id,
+            productName: created.name,
+            category: created.category,
+            type: 'initial',
+            change: created.stock,
+            previousStock: 0,
+            newStock: created.stock,
+            note: `Initial stock on product creation${created.sku ? ` (${created.sku})` : ''}`,
             performedById: req.user.id,
           },
         });
+
+        return created;
+      });
+
+      res.status(201).json({
+        ...doc,
+        _id: doc.id,
+        status: computeProductStatus(doc),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.put(
+  '/:id',
+  adminOnly,
+  [
+    body('name').optional().notEmpty().trim().withMessage('Product name cannot be empty').isLength({ max: 120 }),
+    body('category').optional().notEmpty().trim().withMessage('Category cannot be empty').isLength({ max: 60 }),
+    body('price').optional().isFloat({ min: 0, max: MAX_MONETARY_VALUE }).withMessage('Price must be >= 0'),
+    body('cost').optional({ values: 'falsy' }).isFloat({ min: 0, max: MAX_MONETARY_VALUE }).withMessage('Cost must be >= 0'),
+    body('stock').optional().isInt({ min: 0, max: MAX_STOCK_VALUE }).withMessage('Stock must be an integer >= 0'),
+    body('lowStockThreshold').optional().isInt({ min: 0, max: MAX_STOCK_VALUE }).withMessage('Threshold must be an integer >= 0'),
+  ],
+  async (req, res, next) => {
+    try {
+      if (!isValidId(req.params.id)) {
+        return res.status(400).json({ message: 'Invalid product ID' });
+      }
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ message: errors.array()[0].msg, errors: errors.array() });
       }
 
-      return prod;
-    });
+      if (req.body.cost !== undefined && req.body.cost !== null && req.body.cost !== '' && Number(req.body.cost) < 0) {
+        return res.status(400).json({ message: 'Cost must be a non-negative number' });
+      }
 
-    res.json({
-      ...updated,
-      _id: updated.id,
-      status: computeProductStatus(updated),
-    });
-  } catch (err) {
-    next(err);
+      const prisma = getPrisma();
+      const existing = await prisma.product.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ message: 'Product not found' });
+
+      const updateFields = {};
+      if (req.body.name !== undefined) updateFields.name = String(req.body.name).trim();
+      if (req.body.category !== undefined) updateFields.category = String(req.body.category).trim();
+      if (req.body.price !== undefined) updateFields.price = roundCurrency(req.body.price);
+      if (req.body.cost !== undefined && req.body.cost !== '') updateFields.cost = roundCurrency(req.body.cost);
+      if (req.body.lowStockThreshold !== undefined) {
+        updateFields.lowStockThreshold = Number(req.body.lowStockThreshold);
+      }
+      if (req.body.description !== undefined) {
+        updateFields.description = req.body.description ? String(req.body.description).trim() : null;
+      }
+      if (req.body.image !== undefined) updateFields.image = req.body.image;
+
+      if (req.body.sku !== undefined) {
+        const normalizedSku = normalizeSku(req.body.sku);
+        if (normalizedSku) {
+          if (normalizedSku.length > 64 || !SKU_REGEX.test(normalizedSku)) {
+            return res.status(400).json({
+              message: 'SKU may only contain letters, numbers, hyphens, underscores, and periods (max 64 chars)',
+            });
+          }
+          const duplicateSku = await prisma.product.findFirst({
+            where: {
+              sku: { equals: normalizedSku, mode: 'insensitive' },
+              NOT: { id: req.params.id },
+            },
+          });
+          if (duplicateSku) {
+            return res.status(400).json({ message: `A product with SKU "${normalizedSku}" already exists` });
+          }
+        }
+        updateFields.sku = normalizedSku;
+      }
+
+      if (req.body.stock !== undefined) {
+        const parsedStock = Number(req.body.stock);
+        if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+          return res.status(400).json({ message: 'Stock must be a non-negative integer' });
+        }
+        updateFields.stock = parsedStock;
+      }
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const prod = await tx.product.update({
+          where: { id: req.params.id },
+          data: updateFields,
+        });
+
+        if (updateFields.stock !== undefined && updateFields.stock !== existing.stock) {
+          const diff = prod.stock - existing.stock;
+          await tx.stockLog.create({
+            data: {
+              productId: prod.id,
+              productName: prod.name,
+              category: prod.category,
+              type: diff > 0 ? 'restock' : 'adjustment',
+              change: diff,
+              previousStock: existing.stock,
+              newStock: prod.stock,
+              note:
+                req.body.note && String(req.body.note).trim()
+                  ? String(req.body.note).trim()
+                  : diff > 0
+                  ? `Stock increased via product edit (+${diff})`
+                  : `Stock reduced via product edit (${diff})`,
+              performedById: req.user.id,
+            },
+          });
+        }
+
+        return prod;
+      });
+
+      res.json({
+        ...updated,
+        _id: updated.id,
+        status: computeProductStatus(updated),
+      });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
-router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
+router.patch('/:id/stock', adminOnly, async (req, res, next) => {
   try {
     if (!isValidId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
     }
     const { delta, note } = req.body;
-    if (typeof delta !== 'number' || !Number.isInteger(delta) || delta === 0) {
+    if (
+      typeof delta !== 'number' ||
+      !Number.isInteger(delta) ||
+      delta === 0 ||
+      Math.abs(delta) > MAX_STOCK_VALUE
+    ) {
       return res.status(400).json({ message: 'Stock adjustment delta must be a non-zero integer' });
+    }
+
+    // Resolve an accurate, non-misleading audit note (IMP-13)
+    const rawNote = typeof note === 'string' ? note.trim() : '';
+    let resolvedNote = rawNote;
+    if (!resolvedNote) {
+      resolvedNote = delta > 0 ? `Stock restock (+${delta})` : `Manual stock adjustment (${delta})`;
+    } else if (delta < 0 && /^restock(\s+shipment)?$/i.test(resolvedNote)) {
+      // Prevent misleading "Restock" label when a negative adjustment is submitted
+      resolvedNote = `Manual stock adjustment (${delta})`;
+    } else if (delta > 0 && /^manual\s+stock\s+(deduction|adjustment)/i.test(resolvedNote)) {
+      resolvedNote = `Stock restock (+${delta})`;
     }
 
     const prisma = getPrisma();
@@ -271,7 +405,9 @@ router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
           notFound.statusCode = 404;
           throw notFound;
         }
-        const negErr = new Error('Stock cannot go negative');
+        const negErr = new Error(
+          `Stock cannot go negative (current stock: ${exists.stock}, requested change: ${delta})`
+        );
         negErr.statusCode = 400;
         throw negErr;
       }
@@ -289,7 +425,7 @@ router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
           change: delta,
           previousStock: prevStock,
           newStock,
-          note: note || (delta > 0 ? 'Stock restocked' : 'Stock adjusted'),
+          note: resolvedNote,
           performedById: req.user.id,
         },
       });
@@ -310,7 +446,7 @@ router.patch('/:id/stock', protect, adminOnly, async (req, res, next) => {
   }
 });
 
-router.delete('/:id', protect, adminOnly, async (req, res, next) => {
+router.delete('/:id', adminOnly, async (req, res, next) => {
   try {
     if (!isValidId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid product ID' });
