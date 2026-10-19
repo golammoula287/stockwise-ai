@@ -15,19 +15,35 @@ const settingsRoutes = require('./routes/settings');
 
 const app = express();
 
-// Middleware
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
-app.use(express.json());
+// Security & CORS Middleware
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL ? [process.env.CLIENT_URL, true] : true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+app.use(express.json({ limit: '256kb' }));
+
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Health endpoints (no DB dependency required)
-app.get('/', (req, res) => res.json({ message: 'StockWise AI API', version: '1.0.0', database: 'PostgreSQL + Prisma' }));
-app.get('/api/health', (req, res) => res.json({ ok: true, database: 'postgresql', uptime: process.uptime(), timestamp: new Date().toISOString() }));
+// Explicitly public health endpoints
+app.get('/', (req, res) =>
+  res.json({ message: 'StockWise AI API', version: '1.0.0', database: 'PostgreSQL + Prisma' })
+);
+app.get('/api/health', (req, res) =>
+  res.json({ ok: true, database: 'postgresql', uptime: process.uptime(), timestamp: new Date().toISOString() })
+);
 
 // Ensure DB connection before API routes
 app.use('/api', async (req, res, next) => {
@@ -50,21 +66,39 @@ app.use('/api/settings', settingsRoutes);
 // 404 handler
 app.use((req, res) => res.status(404).json({ message: 'Route not found' }));
 
-// Centralized Error Handler
+// Centralized Error Handler (never leaks SQL, credentials, or stack traces)
 app.use((err, req, res, next) => {
   if (err.code === 'P2002') {
+    const target = Array.isArray(err.meta?.target) ? err.meta.target.join(', ') : String(err.meta?.target || '');
+    if (target.toLowerCase().includes('sku')) {
+      return res.status(400).json({ message: 'A product with this SKU already exists' });
+    }
+    if (target.toLowerCase().includes('email')) {
+      return res.status(400).json({ message: 'Email address is already in use' });
+    }
+    if (target.toLowerCase().includes('invoicenumber')) {
+      return res.status(409).json({ message: 'Invoice number collision detected, please retry' });
+    }
     return res.status(400).json({ message: 'Duplicate field value violates unique constraint' });
   }
   if (err.code === 'P2025') {
     return res.status(404).json({ message: 'Requested record not found' });
   }
   if (err.code === 'P2003') {
-    return res.status(400).json({ message: 'Foreign key constraint failed on related record' });
+    return res.status(400).json({ message: 'Operation blocked by related historical records' });
   }
-  if (process.env.NODE_ENV !== 'test') {
-    console.error('Unhandled error:', err.message);
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ message: 'Malformed JSON request body' });
   }
-  res.status(err.status || err.statusCode || 500).json({ message: err.message || 'Server error' });
+  const status = err.status || err.statusCode || 500;
+  if (process.env.NODE_ENV !== 'test' && status >= 500) {
+    console.error('Server error:', err.message);
+  }
+  const safeMessage =
+    status >= 500 && process.env.NODE_ENV === 'production'
+      ? 'Internal server error'
+      : err.message || 'Server error';
+  res.status(status).json({ message: safeMessage });
 });
 
 if (require.main === module) {
@@ -74,7 +108,7 @@ if (require.main === module) {
       await seedDatabase({ force: false });
     }
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`StockWise API (PostgreSQL + Prisma) running on http://0.0.0.0:${PORT}`);
+      console.log(`StockWise AI API (PostgreSQL + Prisma) running on http://0.0.0.0:${PORT}`);
     });
   });
 }
