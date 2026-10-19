@@ -1,11 +1,15 @@
 process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL =
+  process.env.TEST_DATABASE_URL ||
+  'postgresql://postgres:postgres@localhost:5432/stockwise_test?schema=public';
+
 const request = require('supertest');
 const app = require('../server');
 const { connectDB, disconnectDB } = require('../config/db');
 const { seedDatabase } = require('../utils/seedData');
 const { getJwtSecret } = require('../middleware/auth');
 
-describe('StockWise AI — Comprehensive Backend & Transaction Verification Suite', () => {
+describe('StockWise AI — PostgreSQL + Prisma Integration & Transaction Suite', () => {
   let token = '';
   let createdProductId = '';
   let zeroStockProductId = '';
@@ -20,33 +24,26 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
     await disconnectDB();
   });
 
-  describe('1. Health & Base Routes', () => {
-    it('GET /api/health returns ok status', async () => {
+  describe('1. Health & PostgreSQL Configuration', () => {
+    it('GET /api/health returns ok status and postgresql database engine', async () => {
       const res = await request(app).get('/api/health');
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
+      expect(res.body.database).toBe('postgresql');
     });
 
-    it('requires persistent MONGO_URI when outside test mode and USE_IN_MEMORY_DB is not enabled', async () => {
-      const mongoose = require('mongoose');
+    it('requires DATABASE_URL when running in production environment', async () => {
       const prevEnv = process.env.NODE_ENV;
-      const prevUri = process.env.MONGO_URI;
-      const prevMem = process.env.USE_IN_MEMORY_DB;
+      const prevUrl = process.env.DATABASE_URL;
       try {
         await disconnectDB();
         process.env.NODE_ENV = 'production';
-        delete process.env.MONGO_URI;
-        process.env.USE_IN_MEMORY_DB = 'false';
-        await expect(connectDB()).rejects.toThrow(/MONGO_URI/i);
+        delete process.env.DATABASE_URL;
+        await expect(connectDB()).rejects.toThrow(/DATABASE_URL/i);
       } finally {
         process.env.NODE_ENV = prevEnv;
-        if (prevUri) process.env.MONGO_URI = prevUri;
-        if (prevMem) process.env.USE_IN_MEMORY_DB = prevMem;
-        else delete process.env.USE_IN_MEMORY_DB;
-        if (mongoose.connection.readyState === 0) {
-          await connectDB();
-          await seedDatabase({ force: true });
-        }
+        if (prevUrl) process.env.DATABASE_URL = prevUrl;
+        await connectDB();
       }
     });
   });
@@ -73,6 +70,7 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
       expect(res.status).toBe(200);
       expect(res.body.token).toBeDefined();
       expect(res.body.user.email).toBe('admin@stockwise.com');
+      expect(res.body.user.id).toBeDefined();
       token = res.body.token;
     });
 
@@ -103,7 +101,7 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
     });
   });
 
-  describe('3. Products & Stock Consistency', () => {
+  describe('3. Products & Relational Stock Consistency', () => {
     it('GET /api/products returns paginated products with computed stock status', async () => {
       const res = await request(app).get('/api/products?limit=20');
       expect(res.status).toBe(200);
@@ -111,6 +109,12 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
       const keyboard = res.body.products.find(p => p.name === 'Keyboard');
       expect(keyboard.status).toBe('Out of Stock');
       zeroStockProductId = keyboard._id;
+    });
+
+    it('GET /api/products/:id rejects malformed non-UUID identifier (400)', async () => {
+      const res = await request(app).get('/api/products/not-a-valid-uuid');
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/invalid product id/i);
     });
 
     it('POST /api/products validates invalid product input (400)', async () => {
@@ -121,7 +125,7 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
       expect(res.status).toBe(400);
     });
 
-    it('POST /api/products creates a new product in the database', async () => {
+    it('POST /api/products creates a new product in PostgreSQL', async () => {
       const res = await request(app)
         .post('/api/products')
         .set('Authorization', `Bearer ${token}`)
@@ -174,7 +178,7 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
     });
   });
 
-  describe('4. Customers CRUD', () => {
+  describe('4. Customers CRUD & Relational Purchase History', () => {
     it('POST /api/customers creates a customer and GET /api/customers/:id returns history', async () => {
       const createRes = await request(app)
         .post('/api/customers')
@@ -194,7 +198,7 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
     });
   });
 
-  describe('5. Sales Transaction Integrity, Rollback & Concurrency', () => {
+  describe('5. PostgreSQL Sales Transaction Integrity, Rollback & Concurrency', () => {
     it('POST /api/sales deducts product stock atomically and calculates revenue & profit', async () => {
       const saleRes = await request(app)
         .post('/api/sales')
@@ -259,12 +263,12 @@ describe('StockWise AI — Comprehensive Backend & Transaction Verification Suit
       expect(badDiscount.status).toBe(400);
       expect(badDiscount.body.message).toMatch(/discount/i);
 
-      // Verify stock remained 20 after rejected discount
+      // Verify PostgreSQL transaction rolled back stock to 20 after rejected discount
       const prodRes = await request(app).get(`/api/products/${createdProductId}`);
       expect(prodRes.body.stock).toBe(20);
     });
 
-    it('POST /api/sales rolls back the entire transaction when a second item has insufficient stock', async () => {
+    it('POST /api/sales rolls back the entire PostgreSQL transaction when a second item has insufficient stock', async () => {
       const failRes = await request(app)
         .post('/api/sales')
         .set('Authorization', `Bearer ${token}`)
