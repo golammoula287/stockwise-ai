@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import { formatCount } from '../lib/formatters';
 
+const AIChatbot = lazy(() => import('./AIChatbot.jsx'));
+
+// Unified sidebar navigation with a single "Sales & Customers" entry (Task 2)
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: '◧' },
   { to: '/products', label: 'Products', icon: '📦' },
-  { to: '/sales', label: 'Sales', icon: '🛒' },
-  { to: '/customers', label: 'Customers', icon: '👥' },
+  { to: '/sales', label: 'Sales & Customers', icon: '🛒' },
   { to: '/ai-insights', label: 'AI Insights', icon: '✦' },
   { to: '/settings', label: 'Settings', icon: '⚙' },
 ];
@@ -31,7 +33,7 @@ export default function Layout({ children }) {
   useEffect(() => {
     setMobileOpen(false);
     setNotifOpen(false);
-  }, [location.pathname]);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     let active = true;
@@ -93,6 +95,9 @@ export default function Layout({ children }) {
   }, [location.pathname]);
 
   const handleLogout = () => {
+    try {
+      sessionStorage.removeItem('stockwise_chat_history_v1');
+    } catch (_) {}
     logout();
     navigate('/login');
   };
@@ -298,6 +303,11 @@ export default function Layout({ children }) {
         <main className="p-4 md:p-7 max-w-[1400px] w-full mx-auto flex-1">
           {children}
         </main>
+
+        {/* Floating AI Business Assistant (Task 1) */}
+        <Suspense fallback={null}>
+          <AIChatbot />
+        </Suspense>
       </div>
     </div>
   );

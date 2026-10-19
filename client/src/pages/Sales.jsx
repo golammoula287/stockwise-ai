@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import {
   formatCount,
@@ -9,9 +9,30 @@ import {
   formatDateTimeBD,
 } from '../lib/formatters';
 
+const TAB_TO_QUERY = {
+  'New Sale': 'new',
+  'Sales History': 'history',
+  Customers: 'customers',
+};
+
+function resolveTabFromQuery(tabParam, pathname) {
+  const normalized = String(tabParam || '').trim().toLowerCase();
+  if (normalized === 'history' || normalized === 'sales-history') return 'Sales History';
+  if (normalized === 'customers' || normalized === 'customer' || pathname === '/customers') {
+    return 'Customers';
+  }
+  return 'New Sale';
+}
+
 export default function Sales() {
   const location = useLocation();
-  const [tab, setTab] = useState(location.pathname === '/customers' ? 'Customers' : 'New Sale');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = resolveTabFromQuery(searchParams.get('tab'), location.pathname);
+
+  const setTab = (nextTabLabel) => {
+    const queryValue = TAB_TO_QUERY[nextTabLabel] || 'new';
+    setSearchParams({ tab: queryValue });
+  };
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [sales, setSales] = useState([]);
@@ -37,11 +58,6 @@ export default function Sales() {
   const [custForm, setCustForm] = useState({ name: '', phone: '', email: '', address: '' });
   const [historyModal, setHistoryModal] = useState(null);
   const [invoiceModal, setInvoiceModal] = useState(null);
-
-  useEffect(() => {
-    if (location.pathname === '/customers') setTab('Customers');
-    else if (location.pathname === '/sales' && tab === 'Customers') setTab('New Sale');
-  }, [location.pathname]);
 
   const loadAll = async () => {
     try {
@@ -231,6 +247,16 @@ export default function Sales() {
 
   return (
     <div className="space-y-5">
+      {/* Unified Page Header (Task 2) */}
+      <div className="flex flex-wrap justify-between items-center gap-3">
+        <div>
+          <h1 className="font-extrabold text-xl text-slate-900">Sales &amp; Customers</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Process POS checkouts, inspect persisted tax invoices, and manage customer purchase histories.
+          </p>
+        </div>
+      </div>
+
       {/* Top Tabs */}
       <div className="bg-white border border-slate-200/80 rounded-2xl px-5 pt-3 shadow-sm">
         <div className="flex gap-6 text-xs font-semibold">

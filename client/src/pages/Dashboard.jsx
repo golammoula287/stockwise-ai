@@ -181,7 +181,7 @@ export default function Dashboard() {
         <div className="lg:col-span-5 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold text-slate-900 text-base">Recent Sales</h2>
-            <Link to="/sales" className="text-blue-600 hover:underline text-xs font-semibold">
+            <Link to="/sales?tab=history" className="text-blue-600 hover:underline text-xs font-semibold">
               View All
             </Link>
           </div>

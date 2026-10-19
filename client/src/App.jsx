@@ -57,16 +57,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/customers"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Sales />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/customers" element={<Navigate to="/sales?tab=customers" replace />} />
         <Route
           path="/ai-insights"
           element={
