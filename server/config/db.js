@@ -14,30 +14,39 @@ async function connectDB() {
 
   connectionPromise = (async () => {
     const isTest = process.env.NODE_ENV === 'test';
-    const configuredUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/stockwise';
+    const useInMemoryDemo = process.env.USE_IN_MEMORY_DB === 'true';
 
-    if (!isTest) {
-      try {
-        await mongoose.connect(configuredUri, {
-          autoIndex: true,
-          serverSelectionTimeoutMS: 2500,
-        });
-        console.log('MongoDB connected:', mongoose.connection.host);
-        await seedDatabase({ force: false });
-        return mongoose.connection;
-      } catch (err) {
-        console.warn(`Primary MongoDB (${configuredUri}) unavailable (${err.message}). Starting embedded MongoDB memory server...`);
+    if (!isTest && !useInMemoryDemo) {
+      const configuredUri = process.env.MONGO_URI;
+      if (!configuredUri || !configuredUri.trim()) {
+        throw new Error(
+          'MONGO_URI environment variable is required for persistent MongoDB connection. Set MONGO_URI (e.g. MongoDB Atlas) or explicitly set USE_IN_MEMORY_DB=true for a local demo.'
+        );
       }
+
+      await mongoose.connect(configuredUri.trim(), {
+        autoIndex: true,
+        serverSelectionTimeoutMS: 5000,
+      });
+      console.log('MongoDB connected:', mongoose.connection.host);
+
+      if (process.env.AUTO_SEED === 'true' && process.env.NODE_ENV !== 'production') {
+        await seedDatabase({ force: false });
+      }
+      return mongoose.connection;
     }
 
-    // Fallback or test mode: use MongoMemoryServer
-    const { MongoMemoryServer } = require('mongodb-memory-server');
-    memoryServer = await MongoMemoryServer.create();
+    // Isolated test environment or explicit local demo mode (with replica-set transaction support)
+    const { MongoMemoryReplSet } = require('mongodb-memory-server');
+    memoryServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const memUri = memoryServer.getUri();
     await mongoose.connect(memUri, { autoIndex: true });
-    if (!isTest) {
-      console.log('Embedded MongoDB connected & seeding initial data...');
-      await seedDatabase({ force: false });
+
+    if (!isTest && useInMemoryDemo) {
+      console.log('Explicit local demo mode: connected to MongoMemoryReplSet.');
+      if (process.env.AUTO_SEED !== 'false') {
+        await seedDatabase({ force: false });
+      }
     }
     return mongoose.connection;
   })();

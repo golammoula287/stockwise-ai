@@ -4,14 +4,17 @@ const { disconnectDB } = require('./config/db');
 const { seedDatabase } = require('./utils/seedData');
 
 async function run() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PRODUCTION_SEED !== 'true') {
+    throw new Error('Refusing destructive seed in production without ALLOW_PRODUCTION_SEED=true');
+  }
   await connectDB();
-  const result = await seedDatabase({ force: true });
+  const force = process.env.SEED_FORCE !== 'false';
+  const result = await seedDatabase({ force });
   console.log('Seeding complete:', result);
-  console.log('Login credentials: admin@stockwise.com / admin123 (or john@example.com / admin123)');
   await disconnectDB();
 }
 
 run().catch(err => {
-  console.error('Seed error:', err);
+  console.error('Seed error:', err.message);
   process.exit(1);
 });
