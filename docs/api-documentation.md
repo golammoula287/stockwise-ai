@@ -39,23 +39,25 @@ Missing, malformed, invalid, or expired tokens return `401 Unauthorized`. Admin-
 - **`DELETE /api/customers/:id`** (Protected, Admin only) → Deletes customer record
 
 ## 5. Sales (`/api/sales` — All Protected)
-- **`GET /api/sales?page=1&limit=15&search=&customer=`** (Protected) → Paginated sales history including `items` (`SaleItem[]`)
-- **`GET /api/sales/:id`** (Protected) → Single sale including `items`
+- **`GET /api/sales?page=1&limit=15&search=&customer=`** (Protected) → Paginated sales history including `items` (`SaleItem[]`) and persisted tax snapshot (`taxRate`, `taxAmount`, `taxableAmount`, `isLegacyTax`)
+- **`GET /api/sales/:id`** (Protected) → Single sale including `items` and persisted tax snapshot
 - **`POST /api/sales`** (Protected — PostgreSQL ACID Transaction)
   - Body: `{ "customer"?: "<UUID>", "customerName"?: "...", "customerPhone"?: "...", "items": [{ "product": "<UUID>", "quantity": 2 }], "discount": 0, "taxRate"?: 5, "paymentMethod": "cash" }`
-  - Behavior: Consolidates duplicate product UUIDs, verifies integer quantities and `discount <= subtotal`, atomically deducts stock in PostgreSQL, computes tax and profit, increments `Counter` (`INV-XXXX`), updates customer totals, creates `Sale` + `SaleItem` rows, and records `StockLog` entries inside `prisma.$transaction`.
-  - Errors: `400` invalid quantity/discount/paymentMethod or insufficient stock (rolls back entire transaction), `404` product/customer not found.
+  - Behavior: Consolidates duplicate product UUIDs, verifies integer quantities, `0 <= taxRate <= 100`, and `discount <= subtotal`, atomically deducts stock in PostgreSQL, computes `taxableAmount = subtotal - discount`, `taxAmount = round(taxableAmount * taxRate / 100)`, `total = taxableAmount + taxAmount`, and `profit = taxableAmount - totalCost` using integer minor-unit arithmetic, persists `taxRate` and `taxAmount` on the `Sale` row, increments `Counter` (`INV-XXXX`), updates customer totals, creates `Sale` + `SaleItem` rows, and records `StockLog` entries inside `prisma.$transaction`.
+  - Errors: `400` invalid quantity/discount/taxRate/paymentMethod or insufficient stock (rolls back entire transaction), `404` product/customer not found.
 
 ## 6. Dashboard (`/api/dashboard` — All Protected)
-- **`GET /api/dashboard/stats?dateFilter=This%20Month`** (Protected) → Period-filtered KPI counts, revenue, profit, real period-over-period percentage changes, and low-stock notifications
+- **`GET /api/dashboard/stats?dateFilter=This%20Month`** (Protected) → Period-filtered KPI counts, revenue, profit, real period-over-period percentage changes, independent `lowStockCount`/`outOfStockCount`, and preference-aware `notificationsStatus` & `notificationsMessage`
 - **`GET /api/dashboard/recent-sales?limit=5&dateFilter=`** (Protected) → Recent transactions
 - **`GET /api/dashboard/sales-overview?range=This%20Year`** (Protected) → Actual PostgreSQL sales & profit series (`This Year` 12 monthly buckets or `This Month` 10 3-day buckets)
-- **`GET /api/dashboard/notifications`** (Protected) → Active low-stock alerts (respects `preferences.lowStockAlerts`)
+- **`GET /api/dashboard/notifications`** (Protected)
+  - Returns `{ "alertsEnabled": boolean, "status": "disabled" | "empty" | "active", "message": string, "lowStockCount": number, "outOfStockCount": number, "notifications": [...] }`
 
 ## 7. AI/ML Insights (`/api/ai/insights` — Protected)
 - **`GET /api/ai/insights`** (Protected)
   - Returns:
-    - `summary`: Dynamic narrative distinguishing `thresholdAlertCount` and `forecastReorderCount`
+    - `summary`: Dynamic narrative distinguishing `thresholdAlertCount`, `forecastReorderCount`, and `recommendationState` (`enabled` | `disabled`)
+    - `disabledMessage`: Present when `autoReorderEnabled === false` (e.g. `"4 products are below their low-stock thresholds. Automated reorder recommendations are disabled in Preferences."`)
     - `recommendations`: Reorder suggestions with `triggerType` (`threshold` | `forecast`), `forecast14d`, `forecast14dContinuous`, `leadTimeDays` (`7`), `leadTimeDemand`, `safetyStock`, `reorderPoint`, `stockoutProbability` (`1..99`), `suggested`, and `explainability`
     - `topProducts`: Top selling products over trailing 30 days
     - `slowMoving`: In-stock products with zero 30-day velocity and tied-up capital
