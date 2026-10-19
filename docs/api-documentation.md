@@ -67,3 +67,17 @@ Missing, malformed, invalid, or expired tokens return `401 Unauthorized`. Admin-
 - **`GET /api/settings`** (Protected) → Profile, business config, preferences, and SMTP capability status
 - **`PUT /api/settings`** (Protected) → Updates profile (with unique email check), business config, and preferences
 - **`PUT /api/settings/password`** (Protected) → `{ "currentPassword", "newPassword" }` (verifies current password, hashes new password, and returns a refreshed JWT `token`)
+
+## 9. AI Business Assistant Chatbot (`/api/chat` — All Protected & Rate-Limited)
+- **`GET /api/chat/status`** (Protected)
+  - Returns `{ "configured": boolean, "model": string, "readOnly": true, "availableTools": [...], "message": string }`
+- **`POST /api/chat`** (Protected, Rate-Limited: max 30 requests / 5 min per IP)
+  - Body: `{ "message": "What is my revenue this month?", "history": [{ "role": "user" | "assistant", "content": "..." }] }`
+  - Validation: `message` must be a non-empty string `<= 1000` characters; `history` is optional array `<= 20` items (only `user` and `assistant` roles are retained; spoofed `system` or `tool` roles are stripped).
+  - Returns:
+    - `200 OK`: `{ "reply": "...", "configured": true, "context": { "dataSource": "postgresql", "period": "this_month", "toolsUsed": ["get_revenue_and_profit"], "model": "gpt-4o-mini" } }`
+    - `400 Bad Request`: Missing/empty/oversized message or invalid history format
+    - `401 Unauthorized`: Missing, malformed, or expired JWT
+    - `429 Too Many Requests`: Rate limit exceeded
+    - `502 Bad Gateway` / `504 Gateway Timeout`: External LLM provider error or timeout
+    - `503 Service Unavailable`: `AI_API_KEY` is not configured (`{ "configured": false, "providerStatus": "unconfigured", "reply": "..." }`)

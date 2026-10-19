@@ -18,3 +18,7 @@
 
 ## 5. Product Deletion Policy
 - To preserve historical financial and relational integrity (`ON DELETE RESTRICT` on `sale_items.productId`), products that have appeared in at least one completed `Sale` cannot be hard-deleted via `DELETE /api/products/:id` (`400 Bad Request`). Administrators should set their stock to `0` instead.
+
+## 6. AI Business Assistant Scope & Safety Controls
+- **Read-Only by Design:** The AI Business Assistant (`/api/chat`) can only invoke the 12 approved read-only tools in `server/utils/chatTools.js`. It cannot create, edit, or delete products, stock levels, sales, customers, or business settings, nor can it execute raw SQL or arbitrary Prisma queries.
+- **External Provider Requirement:** Live natural-language synthesis requires setting `AI_API_KEY` (and optional `AI_MODEL` / `AI_BASE_URL`) in `server/.env`. When `AI_API_KEY` is not set, `/api/chat` returns an explicit `503` configuration notice (`configured: false`) and never fabricates LLM responses.
