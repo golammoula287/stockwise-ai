@@ -1,16 +1,10 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from 'recharts';
 import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { formatCount, formatCurrency } from '../lib/formatters';
+
+const SalesOverviewChart = lazy(() => import('../components/SalesOverviewChart.jsx'));
 
 function StatCard({ icon, iconBg, title, value, sub, subColor }) {
   return (
@@ -135,8 +129,8 @@ export default function Dashboard() {
           icon={currency}
           iconBg="bg-amber-100 text-amber-700"
           title={`Revenue (${stats.dateFilter || dateFilter})`}
-          value={`${currency} ${Number(stats.totalRevenue || 0).toLocaleString()}`}
-          sub={`${formatPct(stats.changes?.revenue, 'vs prior')} · Profit: ${currency}${Number(stats.totalProfit || 0).toLocaleString()}`}
+          value={formatCurrency(stats.totalRevenue || 0, currency)}
+          sub={`${formatPct(stats.changes?.revenue, 'vs prior')} · Profit: ${formatCurrency(stats.totalProfit || 0, currency)}`}
           subColor={(stats.changes?.revenue || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}
         />
         <StatCard
@@ -146,7 +140,7 @@ export default function Dashboard() {
           value={stats.lowStockCount}
           sub={
             stats.lowStockCount > 0
-              ? `${stats.outOfStockCount || 0} out of stock · At/below threshold`
+              ? `${formatCount(stats.outOfStockCount || 0, 'item')} out of stock · At/below threshold`
               : 'All products above threshold'
           }
           subColor={stats.lowStockCount > 0 ? 'text-red-600' : 'text-emerald-600'}
@@ -172,35 +166,15 @@ export default function Dashboard() {
               <option value="This Month">Last 30 Days (3-Day Intervals)</option>
             </select>
           </div>
-          <div className="h-[250px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chart}>
-                <defs>
-                  <linearGradient id="salesArea" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.22} />
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tick={{ fontSize: 11, fill: '#64748b' }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={v => (v >= 1000 ? `${Math.round(v / 1000)}K` : v)}
-                />
-                <Tooltip formatter={v => [`${currency} ${Number(v).toLocaleString()}`, 'Sales']} />
-                <Area
-                  type="monotone"
-                  dataKey="sales"
-                  stroke="#2563eb"
-                  strokeWidth={2.5}
-                  fill="url(#salesArea)"
-                  dot={{ r: 3, fill: '#2563eb' }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <Suspense
+            fallback={
+              <div className="h-[250px] grid place-items-center text-xs text-slate-400">
+                Loading revenue chart...
+              </div>
+            }
+          >
+            <SalesOverviewChart chart={chart} currency={currency} />
+          </Suspense>
         </div>
 
         {/* Recent Sales Table */}
@@ -227,7 +201,7 @@ export default function Dashboard() {
                     <td className="py-3 font-semibold text-blue-600">{r.invoiceNumber || `#${i + 1}`}</td>
                     <td className="py-3 font-medium text-slate-800">{r.customer}</td>
                     <td className="py-3 font-semibold text-slate-900">
-                      {currency}{Number(r.amount).toLocaleString()}
+                      {formatCurrency(r.amount, currency)}
                     </td>
                     <td className="py-3 text-right text-slate-500">
                       {new Date(r.date).toLocaleDateString('en-US', {
