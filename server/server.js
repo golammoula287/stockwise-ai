@@ -12,6 +12,7 @@ const saleRoutes = require('./routes/sales');
 const dashboardRoutes = require('./routes/dashboard');
 const aiRoutes = require('./routes/ai');
 const settingsRoutes = require('./routes/settings');
+const chatRoutes = require('./routes/chat');
 
 const app = express();
 
@@ -62,6 +63,7 @@ app.use('/api/sales', saleRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/chat', chatRoutes);
 
 // 404 handler
 app.use((req, res) => res.status(404).json({ message: 'Route not found' }));

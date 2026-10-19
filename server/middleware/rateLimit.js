@@ -1,22 +1,28 @@
 /**
  * In-memory sliding-window rate limiter for authentication & sensitive endpoints.
- * Prevents brute-force credential stuffing without requiring external Redis infrastructure.
+ * Prevents brute-force credential stuffing and chatbot abuse without requiring external Redis infrastructure.
  */
 const buckets = new Map();
 
 function createRateLimiter({
+  prefix = 'auth',
   windowMs = 15 * 60 * 1000,
   max = 15,
   message = 'Too many attempts from this IP, please try again later.',
 } = {}) {
   return function rateLimitMiddleware(req, res, next) {
-    const maxAllowed = process.env.LOGIN_RATE_LIMIT_MAX
-      ? parseInt(process.env.LOGIN_RATE_LIMIT_MAX, 10)
-      : process.env.NODE_ENV === 'test'
-      ? 100
-      : max;
+    const resolvedMax = typeof max === 'function' ? max() : max;
+    const maxAllowed =
+      prefix === 'auth' && process.env.LOGIN_RATE_LIMIT_MAX
+        ? parseInt(process.env.LOGIN_RATE_LIMIT_MAX, 10)
+        : prefix === 'chat' && process.env.CHAT_RATE_LIMIT_MAX
+        ? parseInt(process.env.CHAT_RATE_LIMIT_MAX, 10)
+        : process.env.NODE_ENV === 'test'
+        ? 100
+        : resolvedMax;
 
-    const key = req.ip || req.headers['x-forwarded-for'] || 'global';
+    const ipKey = req.ip || req.headers['x-forwarded-for'] || 'global';
+    const key = `${prefix}:${ipKey}`;
     const now = Date.now();
     const record = buckets.get(key);
 
