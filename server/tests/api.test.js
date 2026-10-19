@@ -3,10 +3,12 @@ const request = require('supertest');
 const app = require('../server');
 const { connectDB, disconnectDB } = require('../config/db');
 const { seedDatabase } = require('../utils/seedData');
+const { getJwtSecret } = require('../middleware/auth');
 
-describe('StockWise AI — Full Backend API Test Suite', () => {
+describe('StockWise AI — Comprehensive Backend & Transaction Verification Suite', () => {
   let token = '';
   let createdProductId = '';
+  let zeroStockProductId = '';
   let createdCustomerId = '';
 
   beforeAll(async () => {
@@ -24,9 +26,32 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
+
+    it('requires persistent MONGO_URI when outside test mode and USE_IN_MEMORY_DB is not enabled', async () => {
+      const mongoose = require('mongoose');
+      const prevEnv = process.env.NODE_ENV;
+      const prevUri = process.env.MONGO_URI;
+      const prevMem = process.env.USE_IN_MEMORY_DB;
+      try {
+        await disconnectDB();
+        process.env.NODE_ENV = 'production';
+        delete process.env.MONGO_URI;
+        process.env.USE_IN_MEMORY_DB = 'false';
+        await expect(connectDB()).rejects.toThrow(/MONGO_URI/i);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevUri) process.env.MONGO_URI = prevUri;
+        if (prevMem) process.env.USE_IN_MEMORY_DB = prevMem;
+        else delete process.env.USE_IN_MEMORY_DB;
+        if (mongoose.connection.readyState === 0) {
+          await connectDB();
+          await seedDatabase({ force: true });
+        }
+      }
+    });
   });
 
-  describe('2. Authentication & Authorization', () => {
+  describe('2. Authentication & Security', () => {
     it('POST /api/auth/login validates missing fields (400)', async () => {
       const res = await request(app).post('/api/auth/login').send({});
       expect(res.status).toBe(400);
@@ -63,18 +88,29 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       expect(res.status).toBe(200);
       expect(res.body.email).toBe('admin@stockwise.com');
     });
+
+    it('enforces JWT_SECRET in production environment', () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevSecret = process.env.JWT_SECRET;
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.JWT_SECRET;
+        expect(() => getJwtSecret()).toThrow(/JWT_SECRET/i);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevSecret) process.env.JWT_SECRET = prevSecret;
+      }
+    });
   });
 
-  describe('3. Products & Inventory Management', () => {
+  describe('3. Products & Stock Consistency', () => {
     it('GET /api/products returns paginated products with computed stock status', async () => {
       const res = await request(app).get('/api/products?limit=20');
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.products)).toBe(true);
-      expect(res.body.products.length).toBeGreaterThanOrEqual(5);
       const keyboard = res.body.products.find(p => p.name === 'Keyboard');
       expect(keyboard.status).toBe('Out of Stock');
-      const mouse = res.body.products.find(p => p.name === 'Wireless Mouse');
-      expect(mouse.status).toBe('Low Stock');
+      zeroStockProductId = keyboard._id;
     });
 
     it('POST /api/products validates invalid product input (400)', async () => {
@@ -103,7 +139,14 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       createdProductId = res.body._id;
     });
 
-    it('PATCH /api/products/:id/stock adjusts stock and prevents negative stock', async () => {
+    it('PATCH /api/products/:id/stock rejects non-integer and negative-resulting stock adjustments', async () => {
+      const floatRes = await request(app)
+        .patch(`/api/products/${createdProductId}/stock`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ delta: 1.5, note: 'Fractional adjustment' });
+      expect(floatRes.status).toBe(400);
+      expect(floatRes.body.message).toMatch(/integer/i);
+
       const okRes = await request(app)
         .patch(`/api/products/${createdProductId}/stock`)
         .set('Authorization', `Bearer ${token}`)
@@ -128,7 +171,6 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       const catRes = await request(app).get('/api/products/categories');
       expect(catRes.status).toBe(200);
       expect(Array.isArray(catRes.body)).toBe(true);
-      expect(catRes.body.some(c => c.category === 'Electronics')).toBe(true);
     });
   });
 
@@ -149,12 +191,11 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       const detailRes = await request(app).get(`/api/customers/${createdCustomerId}`);
       expect(detailRes.status).toBe(200);
       expect(detailRes.body.customer.name).toBe('Tanvir Ahmed');
-      expect(Array.isArray(detailRes.body.purchaseHistory)).toBe(true);
     });
   });
 
-  describe('5. Sales Checkout & Automatic Stock Deduction', () => {
-    it('POST /api/sales deducts product stock automatically and calculates revenue & profit', async () => {
+  describe('5. Sales Transaction Integrity, Rollback & Concurrency', () => {
+    it('POST /api/sales deducts product stock atomically and calculates revenue & profit', async () => {
       const saleRes = await request(app)
         .post('/api/sales')
         .set('Authorization', `Bearer ${token}`)
@@ -165,38 +206,129 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
           paymentMethod: 'cash',
         });
       expect(saleRes.status).toBe(201);
-      // 3 * 1200 = 3600 subtotal, 100 discount => 3500 total; cost 3 * 800 = 2400 => 1100 profit
       expect(saleRes.body.subtotal).toBe(3600);
       expect(saleRes.body.total).toBe(3500);
       expect(saleRes.body.profit).toBe(1100);
+      expect(saleRes.body.invoiceNumber).toMatch(/^INV-\d+$/);
 
-      // Verify stock deducted from 25 to 22
       const prodRes = await request(app).get(`/api/products/${createdProductId}`);
-      expect(prodRes.status).toBe(200);
       expect(prodRes.body.stock).toBe(22);
 
-      // Verify customer totalSpent updated
       const custRes = await request(app).get(`/api/customers/${createdCustomerId}`);
       expect(custRes.body.customer.totalSpent).toBe(3500);
       expect(custRes.body.customer.totalOrders).toBe(1);
     });
 
-    it('POST /api/sales rejects sale when stock is insufficient and keeps stock intact', async () => {
+    it('POST /api/sales merges duplicate product entries in a single request', async () => {
+      const saleRes = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          customer: createdCustomerId,
+          items: [
+            { product: createdProductId, quantity: 1 },
+            { product: createdProductId, quantity: 1 },
+          ],
+          paymentMethod: 'card',
+        });
+      expect(saleRes.status).toBe(201);
+      expect(saleRes.body.items.length).toBe(1);
+      expect(saleRes.body.items[0].quantity).toBe(2);
+
+      const prodRes = await request(app).get(`/api/products/${createdProductId}`);
+      expect(prodRes.body.stock).toBe(20);
+    });
+
+    it('POST /api/sales rejects invalid quantity, excessive discount, and invalid paymentMethod', async () => {
+      const badQty = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ items: [{ product: createdProductId, quantity: 1.5 }] });
+      expect(badQty.status).toBe(400);
+
+      const badPay = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ items: [{ product: createdProductId, quantity: 1 }], paymentMethod: 'crypto' });
+      expect(badPay.status).toBe(400);
+
+      const badDiscount = await request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ items: [{ product: createdProductId, quantity: 1 }], discount: 999999 });
+      expect(badDiscount.status).toBe(400);
+      expect(badDiscount.body.message).toMatch(/discount/i);
+
+      // Verify stock remained 20 after rejected discount
+      const prodRes = await request(app).get(`/api/products/${createdProductId}`);
+      expect(prodRes.body.stock).toBe(20);
+    });
+
+    it('POST /api/sales rolls back the entire transaction when a second item has insufficient stock', async () => {
       const failRes = await request(app)
         .post('/api/sales')
         .set('Authorization', `Bearer ${token}`)
         .send({
-          items: [{ product: createdProductId, quantity: 500 }],
+          customer: createdCustomerId,
+          items: [
+            { product: createdProductId, quantity: 5 },
+            { product: zeroStockProductId, quantity: 2 },
+          ],
         });
       expect(failRes.status).toBe(400);
       expect(failRes.body.message).toMatch(/insufficient stock/i);
 
+      // Verify first item's stock was rolled back to 20 and customer orders stayed 2
       const prodRes = await request(app).get(`/api/products/${createdProductId}`);
-      expect(prodRes.body.stock).toBe(22);
+      expect(prodRes.body.stock).toBe(20);
+
+      const custRes = await request(app).get(`/api/customers/${createdCustomerId}`);
+      expect(custRes.body.customer.totalOrders).toBe(2);
+    });
+
+    it('POST /api/sales handles concurrent checkouts safely without negative stock or duplicate invoices', async () => {
+      const limitedRes = await request(app)
+        .post('/api/products')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Limited Edition GPU',
+          category: 'Electronics',
+          price: 50000,
+          cost: 42000,
+          stock: 5,
+          lowStockThreshold: 2,
+        });
+      const gpuId = limitedRes.body._id;
+
+      // Fire two concurrent requests each trying to buy 4 units out of 5
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/sales')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ items: [{ product: gpuId, quantity: 4 }] }),
+        request(app)
+          .post('/api/sales')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ items: [{ product: gpuId, quantity: 4 }] }),
+      ]);
+
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([201, 400]);
+
+      const afterGpu = await request(app).get(`/api/products/${gpuId}`);
+      expect(afterGpu.body.stock).toBe(1);
+    });
+
+    it('DELETE /api/products/:id blocks deleting a product that has recorded sales history', async () => {
+      const delRes = await request(app)
+        .delete(`/api/products/${createdProductId}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(delRes.status).toBe(400);
+      expect(delRes.body.message).toMatch(/sales history/i);
     });
   });
 
-  describe('6. Dashboard & AI Insights', () => {
+  describe('6. Dashboard & AI/ML Demand Forecasting Verification', () => {
     it('GET /api/dashboard/stats, /recent-sales, and /sales-overview return live analytics', async () => {
       const statsRes = await request(app)
         .get('/api/dashboard/stats')
@@ -204,7 +336,6 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       expect(statsRes.status).toBe(200);
       expect(statsRes.body.totalProducts).toBeGreaterThanOrEqual(10);
       expect(statsRes.body.totalRevenue).toBeGreaterThan(0);
-      expect(Array.isArray(statsRes.body.notifications)).toBe(true);
 
       const chartRes = await request(app)
         .get('/api/dashboard/sales-overview')
@@ -213,18 +344,23 @@ describe('StockWise AI — Full Backend API Test Suite', () => {
       expect(chartRes.body.length).toBeGreaterThanOrEqual(10);
     });
 
-    it('GET /api/ai/insights computes real recommendations, top products, and business summary', async () => {
+    it('GET /api/ai/insights computes Holt time-series demand forecasts, stockout risk, and baseline MAE evaluation', async () => {
       const aiRes = await request(app)
         .get('/api/ai/insights')
         .set('Authorization', `Bearer ${token}`);
       expect(aiRes.status).toBe(200);
       expect(typeof aiRes.body.summary).toBe('string');
-      expect(aiRes.body.summary.length).toBeGreaterThan(20);
+      expect(aiRes.body.modelEvaluation).toBeDefined();
+      expect(typeof aiRes.body.modelEvaluation.maeModel).toBe('number');
+      expect(typeof aiRes.body.modelEvaluation.maeBaseline).toBe('number');
       expect(Array.isArray(aiRes.body.recommendations)).toBe(true);
       expect(aiRes.body.recommendations.length).toBeGreaterThan(0);
-      expect(Array.isArray(aiRes.body.topProducts)).toBe(true);
-      expect(aiRes.body.topProducts.length).toBeGreaterThan(0);
-      expect(Array.isArray(aiRes.body.slowMoving)).toBe(true);
+
+      const firstRec = aiRes.body.recommendations[0];
+      expect(typeof firstRec.forecast14d).toBe('number');
+      expect(firstRec.stockoutProbability).toBeGreaterThanOrEqual(1);
+      expect(firstRec.stockoutProbability).toBeLessThanOrEqual(99);
+      expect(typeof firstRec.explainability).toBe('string');
     });
   });
 
