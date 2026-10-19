@@ -4,13 +4,13 @@ const { generateInsights } = require('../utils/aiInsights');
 
 const router = express.Router();
 
-router.get('/insights', protect, async (req, res) => {
+router.get('/insights', protect, async (req, res, next) => {
   try {
-    const insights = await generateInsights();
+    const forceRecommendations = req.query.forceRecommendations === 'true';
+    const insights = await generateInsights({ forceRecommendations });
     res.json(insights);
-  } catch (e) {
-    console.error('AI insights error', e);
-    res.status(500).json({ message: 'Failed to generate insights' });
+  } catch (err) {
+    next(err);
   }
 });
 
