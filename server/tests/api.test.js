@@ -1,7 +1,9 @@
 process.env.NODE_ENV = 'test';
-process.env.DATABASE_URL =
-  process.env.TEST_DATABASE_URL ||
-  'postgresql://postgres:postgres@localhost:5432/stockwise_test?schema=public';
+require('dotenv').config();
+const { validateTestDatabase } = require('../utils/testDatabase');
+process.env.DATABASE_URL = validateTestDatabase(process.env.TEST_DATABASE_URL, process.env.DATABASE_URL);
+process.env.SEED_ADMIN_EMAIL = 'admin@stockwise.com';
+process.env.SEED_ADMIN_PASSWORD = 'isolated-test-password-only';
 
 const jwt = require('jsonwebtoken');
 const request = require('supertest');
@@ -113,7 +115,7 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL, Tax Persistence &
     it('POST /api/auth/login authenticates valid admin user and returns JWT', async () => {
       const res = await request(app)
         .post('/api/auth/login')
-        .send({ email: 'admin@stockwise.com', password: 'admin123' });
+        .send({ email: 'admin@stockwise.com', password: process.env.SEED_ADMIN_PASSWORD });
       expect(res.status).toBe(200);
       expect(res.body.token).toBeDefined();
       expect(res.body.user.email).toBe('admin@stockwise.com');

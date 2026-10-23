@@ -15,9 +15,9 @@ function resetMockLLMProvider() {
 }
 
 function getProviderConfig() {
-  const apiKey = (process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
-  const model = (process.env.AI_MODEL || 'gpt-4o-mini').trim();
-  const baseUrl = (process.env.AI_BASE_URL || 'https://api.openai.com/v1')
+  const apiKey = (process.env.AI_API_KEY || '').trim();
+  const model = (process.env.AI_MODEL || 'grok-4.7').trim();
+  const baseUrl = (process.env.AI_BASE_URL || 'https://api.x.ai/v1')
     .trim()
     .replace(/\/+$/, '');
   const timeoutMs = Math.min(
@@ -164,8 +164,7 @@ async function callChatCompletionProvider({ messages, tools, config, userContext
       body: JSON.stringify({
         model: config.model,
         messages,
-        tools,
-        tool_choice: 'auto',
+        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
         temperature: 0.2,
         max_tokens: 800,
       }),

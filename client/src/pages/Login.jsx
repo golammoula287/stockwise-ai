@@ -123,20 +123,6 @@ export default function Login() {
             {loading ? 'Signing in...' : 'Login'}
           </button>
 
-          <div className="mt-2.5 text-center">
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('admin@stockwise.com');
-                setPassword('admin123');
-                setErr('');
-              }}
-              className="text-[11px] text-slate-500 hover:text-blue-600 underline"
-            >
-              Fill demo evaluator credentials
-            </button>
-          </div>
-
           <div className="relative my-4 text-center">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-slate-200" />

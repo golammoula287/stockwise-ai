@@ -1,9 +1,9 @@
 # Demo & Verification Checklist
 
 ## 1. Environment & PostgreSQL Setup
-- [ ] `server/.env` has `DATABASE_URL="postgresql://USER@HOST:5432/stockwise?schema=public"` and a strong `JWT_SECRET`
-- [ ] Run `cd server && npx prisma migrate deploy && npm run seed`
-- [ ] Run `cd server && npm test` — all 24 automated PostgreSQL integration and concurrency tests pass
+- [ ] `server/.env` has separate Neon development/test URLs with SSL and a strong `JWT_SECRET`
+- [ ] On the development database only, run `cd server && npx prisma migrate deploy && npm run seed`; supply a private seed password first
+- [ ] Run `cd server && npm run test:prepare && npm test` — all automated PostgreSQL integration and concurrency tests pass
 - [ ] Run `cd client && npm run build` — production bundle compiles with zero errors
 
 ## 2. Authentication & Security

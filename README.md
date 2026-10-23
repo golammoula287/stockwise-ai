@@ -27,19 +27,17 @@
 
 The chatbot backend (`server/utils/aiChatbot.js` and `server/utils/chatTools.js`) keeps all LLM credentials strictly server-side and never bundles any AI SDK into the frontend.
 
-### Supported Providers & Environment Variables (`server/.env`)
+### Grok / xAI configuration (`server/.env`)
 ```env
-AI_API_KEY=your_provider_api_key_here
-AI_MODEL=gpt-4o-mini
-# Optional OpenAI-compatible base URL (defaults to https://api.openai.com/v1)
-AI_BASE_URL=https://api.openai.com/v1
-AI_PROVIDER_TIMEOUT_MS=15000
+AI_API_KEY=your_xai_api_key
+AI_MODEL=grok-4.7
+AI_BASE_URL=https://api.x.ai/v1
+AI_PROVIDER_TIMEOUT_MS=30000
 CHAT_RATE_LIMIT_MAX=30
 ```
-- **OpenAI:** `AI_BASE_URL=https://api.openai.com/v1`, `AI_MODEL=gpt-4o-mini` (approx. `$0.15 / 1M` input tokens, `$0.60 / 1M` output tokens; a typical tool-grounded business query uses ~1,200–2,000 tokens or `~$0.0004` per turn).
-- **Groq (OpenAI-compatible):** `AI_BASE_URL=https://api.groq.com/openai/v1`, `AI_MODEL=llama-3.3-70b-versatile`.
-- **Google Gemini (OpenAI-compatible):** `AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`, `AI_MODEL=gemini-2.0-flash`.
-- **Unconfigured Mode (`AI_API_KEY` empty):** The application continues working normally, `/api/chat/status` reports `configured: false`, and `/api/chat` returns a clear `503` setup notice without pretending an LLM generated an answer.
+The existing Chat Completions integration uses xAI's compatible endpoint and approved local read-only tools. Choose a tool-capable model available in your xAI account. See [xAI documentation](https://docs.x.ai/developers/model-capabilities/legacy/chat-completions). The key remains on the server. An empty key keeps the assistant visibly unconfigured (503); inventory forecasting remains available without an LLM.
+
+See [local setup](docs/local-setup.md) for Neon configuration, migrations, safe seeding, and tests.
 
 ### Approved Read-Only Business Data Tools (`server/utils/chatTools.js`)
 1. `get_dashboard_kpis` — Period-filtered KPIs (`today`, `last_7_days`, `last_30_days`, `this_month`, `all_time`).
@@ -71,10 +69,10 @@ CHAT_RATE_LIMIT_MAX=30
 
 ## Automated Testing & Production Build
 
-Apply migrations to the isolated test database (`stockwise_test`) and run the 34-test backend suite:
+Apply migrations to the isolated test database (`stockwise_test`) and run the backend integration suite:
 ```bash
 cd server
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/stockwise_test?schema=public" npx prisma migrate deploy
+npm run test:prepare
 npm test
 ```
 

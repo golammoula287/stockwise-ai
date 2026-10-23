@@ -9,7 +9,10 @@
     "seed": "node seed.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
-    "test": "jest --detectOpenHandles --runInBand"
+    "test": "jest --detectOpenHandles --runInBand",
+    "test:unit": "jest --runInBand tests/safety.test.js tests/grok.test.js tests/seedSafety.test.js",
+    "test:integration": "jest --detectOpenHandles --runInBand tests/api.test.js",
+    "test:prepare": "node scripts/prepareTestDatabase.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

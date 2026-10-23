@@ -2,6 +2,11 @@ const bcrypt = require('bcryptjs');
 const { getPrisma } = require('../config/db');
 
 async function seedDatabase({ force = false } = {}) {
+  const adminEmail = (process.env.SEED_ADMIN_EMAIL || '').toLowerCase().trim();
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || '';
+  if (!adminEmail || adminPassword.length < 16 || /^(replace_with|change_me)/i.test(adminPassword)) {
+    throw new Error('Set SEED_ADMIN_EMAIL and a unique SEED_ADMIN_PASSWORD of at least 16 characters before seeding');
+  }
   const prisma = getPrisma();
 
   if (!force) {
@@ -19,8 +24,6 @@ async function seedDatabase({ force = false } = {}) {
     await prisma.counter.deleteMany({});
   }
 
-  const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@stockwise.com').toLowerCase().trim();
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'admin123';
   const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
   const admin = await prisma.user.create({
@@ -33,19 +36,6 @@ async function seedDatabase({ force = false } = {}) {
       businessName: 'StockWise AI',
     },
   });
-
-  if (adminEmail !== 'john@example.com') {
-    await prisma.user.create({
-      data: {
-        name: 'John Doe',
-        email: 'john@example.com',
-        password: hashedPassword,
-        role: 'admin',
-        phone: '01712345678',
-        businessName: 'StockWise AI',
-      },
-    });
-  }
 
   await prisma.setting.create({
     data: {

@@ -8,7 +8,7 @@ async function run() {
     throw new Error('Refusing destructive seed in production without ALLOW_PRODUCTION_SEED=true');
   }
   await connectDB();
-  const force = process.env.SEED_FORCE !== 'false';
+  const force = process.env.SEED_FORCE === 'true';
   const result = await seedDatabase({ force });
   console.log('Seeding complete:', result);
   await disconnectDB();

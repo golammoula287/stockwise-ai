@@ -48,4 +48,3 @@ Thumbs.db
 *.pem
 *.key
 secrets.json
-package-lock.json

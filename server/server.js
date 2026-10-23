@@ -3,7 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const connectDB = require('./config/db');
-const { seedDatabase } = require('./utils/seedData');
+const { corsOptions } = require('./middleware/originPolicy');
+const { demoReadOnly } = require('./middleware/demoReadOnly');
 
 const authRoutes = require('./routes/auth');
 const productRoutes = require('./routes/products');
@@ -24,14 +25,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL ? [process.env.CLIENT_URL, true] : true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '256kb' }));
 
 if (process.env.NODE_ENV !== 'test') {
@@ -45,6 +39,18 @@ app.get('/', (req, res) =>
 app.get('/api/health', (req, res) =>
   res.json({ ok: true, database: 'postgresql', uptime: process.uptime(), timestamp: new Date().toISOString() })
 );
+
+app.get('/api/ready', async (req, res) => {
+  try {
+    const prisma = await connectDB();
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, database: 'postgresql' });
+  } catch (_) {
+    res.status(503).json({ ok: false, message: 'Database is unavailable' });
+  }
+});
+
+app.use('/api', demoReadOnly);
 
 // Ensure DB connection before API routes
 app.use('/api', async (req, res, next) => {
@@ -105,13 +111,13 @@ app.use((err, req, res, next) => {
 
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
-  connectDB().then(async () => {
-    if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
-      await seedDatabase({ force: false });
-    }
+  connectDB().then(() => {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`StockWise AI API (PostgreSQL + Prisma) running on http://0.0.0.0:${PORT}`);
     });
+  }).catch(() => {
+    console.error('Database connection failed; check server environment configuration.');
+    process.exitCode = 1;
   });
 }
 
