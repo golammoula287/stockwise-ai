@@ -19,6 +19,7 @@ const app = express();
 
 // Security & CORS Middleware
 app.disable('x-powered-by');
+if (process.env.VERCEL === '1') app.set('trust proxy', 1);
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -50,6 +51,8 @@ app.get('/api/ready', async (req, res) => {
   }
 });
 
+// User administration is separately authenticated, even in the public browser demo.
+app.use('/api/users', async (req,res,next)=>{try{await connectDB();next();}catch(error){next(error);}}, require('./routes/users'));
 app.use('/api', demoReadOnly);
 
 // Ensure DB connection before API routes

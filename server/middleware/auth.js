@@ -39,7 +39,7 @@ exports.protect = async (req, res, next) => {
     }
 
     const { password, ...safeUser } = user;
-    req.user = { ...safeUser, _id: user.id };
+    req.user = { ...safeUser, _id: user.id, isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user) };
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

@@ -67,7 +67,7 @@ router.post('/', limiter, async (req, res, next) => {
     }
     res.set('Cache-Control', 'no-store').json({
       token: signToken(user),
-      user: { id: user.id, _id: user.id, name: user.name, email: user.email, role: user.role, phone: user.phone || '', businessName: user.businessName || 'StockWise AI' },
+      user: { id: user.id, _id: user.id, name: user.name, email: user.email, role: user.role, isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user), phone: user.phone || '', businessName: user.businessName || 'StockWise AI' },
     });
   } catch (err) { next(err); }
 });

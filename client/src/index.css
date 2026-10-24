@@ -1153,3 +1153,82 @@ html:has(.landing) { scroll-behavior: smooth; }
 .login-page button:disabled { cursor:not-allowed; }
 @media(max-width:699px) { .login-form-panel { padding:30px 24px; } .login-form input { font-size:16px; } .login-form-panel h1 { font-size:32px; } }
 @media(prefers-reduced-motion:reduce) { .login-submit { transition:none; } }
+
+/* Centered account access, matching the workspace palette. */
+.login-main { display:flex; justify-content:center; align-items:center; padding:38px 24px; background:#f7f9fd; }
+.login-story { display:none; }
+.login-form-panel { background:white; border:1px solid #e2e7ef; border-radius:12px; padding:34px 38px; width:100%; max-width:470px; box-shadow:0 10px 35px #09154005; }
+.login-form-inner { max-width:none; }
+.login-form-panel .landing-eyebrow,.login-form-panel h1,.login-subtitle { text-align:center; }
+.login-form-panel h1 { font-size:32px; }
+.login-subtitle { font-size:12px; margin-bottom:22px; }
+.login-demo-caption { justify-content:center; }
+@media(max-width:699px) { .login-main { display:flex; padding:24px 16px; min-height:calc(100svh - 126px); } .login-form-panel { padding:28px 22px; } .login-form-panel h1 { font-size:29px; } }
+.login-form-panel .landing-eyebrow { display:block; text-align:center; }
+
+/* Fit account access to the available viewport without clipping the form. */
+.login-page { min-height:100dvh; }
+.login-main { min-height:0; }
+.login-header,.login-footer { flex-shrink:0; }
+@media(max-height:900px) {
+  .login-header { min-height:62px; }
+  .login-footer { min-height:40px; padding-block:12px; }
+  .login-main { padding-block:18px; }
+  .login-form-panel { padding:24px 30px; }
+  .login-form-panel h1 { margin-top:8px; font-size:29px; }
+  .login-subtitle { margin-top:7px; margin-bottom:16px; }
+  .login-divider { margin-block:17px; }
+  .login-form { gap:15px; }
+  .login-form input { min-height:46px; padding-block:10px; }
+  .login-form label { margin-bottom:7px; }
+  .login-password-field button { top:4px; }
+  .login-submit { min-height:45px; }
+  .login-access-note { margin-top:15px; }
+  .login-demo-caption { margin-top:14px; padding:9px 12px; }
+  .login-form-panel:has(#register-name) .login-form { margin-top:18px; }
+}
+@media(max-height:700px) {
+  .login-header { min-height:52px; }
+  .login-footer { display:none; }
+  .login-main { padding:12px 16px; }
+  .login-form-panel { padding:20px 24px; }
+  .login-form-panel .landing-eyebrow,.login-demo-caption { display:none; }
+  .login-form-panel h1 { margin-top:0; font-size:27px; }
+  .login-subtitle { margin-bottom:13px; font-size:11px; }
+  .login-form { gap:12px; }
+  .login-form input { min-height:43px; padding-block:9px; }
+  .login-password-field button { min-height:35px; }
+  .login-divider { margin-block:13px; }
+  .login-access-note { margin-top:12px; }
+  .login-provider-note { font-size:9px; margin-top:6px; }
+}
+@media(max-height:540px) {
+  .login-header { min-height:44px; }
+  .login-main { padding-block:8px; }
+  .login-form-panel { padding:16px 22px; }
+  .login-form-panel h1 { font-size:24px; }
+  .login-subtitle { display:none; }
+  .login-form-panel h1 { margin-bottom:12px; }
+  .login-form { gap:9px; }
+  .login-form label { margin-bottom:5px; }
+  .login-divider { margin-block:9px; }
+  .login-form input { min-height:39px; padding-block:7px; }
+  .login-password-field button { top:2px; }
+  .login-submit { min-height:39px; margin-top:2px; }
+  .login-access-note { margin-top:8px; }
+  .login-google-fallback { min-height:39px; }
+}
+@media(max-height:700px) {
+  .login-form-panel { padding-block:18px; }
+  .login-page .google-signin-wrap { margin-top:0; }
+  .login-form-panel:has(#register-name) .login-form { margin-top:12px; }
+}
+@media(max-height:450px) and (min-width:600px) {
+  .login-header { display:none; }
+  .login-form-panel { max-width:680px; padding:12px 24px; }
+  .login-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 16px; }
+  .login-form > .login-submit,.login-form > .login-error { grid-column:1/-1; }
+  .login-form-panel:has(#register-name) .login-form { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .login-access-note { margin-top:6px; }
+}
+@media(max-height:600px) { .login-subtitle { display:none; } .login-form-panel h1 { margin-bottom:14px; } }

@@ -11,6 +11,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
 const Products = lazy(() => import('./pages/Products.jsx'));
 const Sales = lazy(() => import('./pages/Sales.jsx'));
 const AIInsights = lazy(() => import('./pages/AIInsights.jsx'));
+const Users = lazy(() => import('./pages/Users.jsx'));
 const Settings = lazy(() => import('./pages/Settings.jsx'));
 
 function PageLoader() {
@@ -79,6 +80,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/users" element={<ProtectedRoute><Layout><Users /></Layout></ProtectedRoute>} />
         <Route path="*" element={<Navigate to={user ? '/dashboard' : '/'} replace />} />
       </Routes>
     </Suspense></ConfirmProvider>

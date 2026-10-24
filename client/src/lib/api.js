@@ -13,7 +13,7 @@ api.interceptors.request.use(async cfg => {
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
   const url = new URL(cfg.url, 'https://local.example');
   const path = url.pathname;
-  if (path.startsWith('/auth/')) return cfg;
+  if (path === '/users' || path.startsWith('/users/') || path.startsWith('/auth/')) return cfg;
   if (!token && path !== '/health') return cfg;
   const health = await (healthCheck ||= transport.get('/health').then(response => response.data).catch(() => { healthCheck = null; return null; }));
   if (health?.demoReadOnly !== true) return cfg;

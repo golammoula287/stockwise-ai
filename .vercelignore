@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/secrets.json
+
+# Local account handoff; never publish.
+docs/PRIVATE_ACCESS.md

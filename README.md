@@ -1,118 +1,365 @@
-# StockWise AI — Smart Inventory & Sales Management System
+# StockWise AI
 
-> Full-stack inventory, POS checkout, customer tracking, calibrated time-series demand forecasting, and PostgreSQL-grounded AI Business Assistant built with React, Node.js/Express, PostgreSQL, and Prisma ORM.
+### Inventory, sales, and customer records in one workspace.
 
-**Repository:** [https://github.com/golammoula287/stockwise-ai](https://github.com/golammoula287/stockwise-ai)
+StockWise AI is a full-stack retail management portfolio project. It brings together a product catalog, point-of-sale checkout, customer records, cash memos, sales reports, and demand insights in a responsive interface.
 
----
+Built for a professional portfolio and an interactive Upwork demonstration. All sample business data is fictional.
 
-## Overview & Key Features
+[Repository](https://github.com/golammoula287/stockwise-ai) · [Setup](#run-locally) · [Demo access](#demo-access) · [Vercel deployment](#deploy-on-vercel) · [Documentation](#documentation)
 
-### Unified Application Navigation (Route-Split with `React.lazy` & `Suspense`)
-1. **Home (`/`) — Public:** Overview of core capabilities, interactive preview cards, Features, About, and Administrator Contact form.
-2. **Login (`/login`) — Public:** JWT email/password authentication with login rate limiting, input validation, password visibility toggle, and Google Identity Services sign-in for invited accounts when GOOGLE_CLIENT_ID is configured.
-3. **Dashboard (`/dashboard`) — Protected:** KPI summary cards (`Total Products`, `Sales`, `Revenue & Profit`, `Low Stock Items`), lazy-loaded `Sales Overview` area chart (`Recharts`) with `This Year` (monthly) and `Last 30 Days` (3-day interval) views, live date range filters (`This Month`, `Last 30 Days`, `Last 7 Days`, `Today`, `All Time`), preference-aware low-stock alert bell, and `Recent Sales` table.
-4. **Products & Inventory (`/products`) — Protected:** Paginated product catalog with unique `SKU` badges, search (by name, SKU, or category), category/status/sort filters, `Low Stock` filter tab, `Stock History` audit ledger tab, `Categories` valuation tab, Product CRUD modal (`Admin`), and atomic integer stock adjustment modal (`±Stock`, `Admin`).
-5. **Sales & Customers (`/sales`) — Protected (Unified Navigation):** Single unified page with query-synchronized tabs (`/sales?tab=new`, `/sales?tab=history`, `/sales?tab=customers`; `/customers` redirects cleanly to `/sales?tab=customers`):
-   - **New Sale (`?tab=new`):** Three-column POS checkout with cart management, automatic stock deduction, persisted Business Settings tax snapshot (`taxRate` & `taxAmount`), payment method selection (`Cash`, `Card`, `bKash`, `Other`), and walk-in default reset after checkout.
-   - **Sales History (`?tab=history`):** Complete invoice ledger with persisted tax snapshot badges and interactive Invoice Detail Modal.
-   - **Customers (`?tab=customers`):** Customer CRUD, search, reconciled order/spending totals, and full purchase history inspection.
-6. **AI Insights (`/ai-insights`) — Protected:** Calibrated 14-day demand forecasting (`Holt's Double Exponential Smoothing` with sparse-demand damping), explicit separation of `Low-Stock Threshold Alerts` vs. `Proactive Forecast Reorders` vs. `Automated AI Suggestions` state, 7-day lead-time Reorder Point (`ROP`) & 95% service-level safety stock, calibrated Gaussian stockout risk $P(D_{14} > \text{stock})$, slow-moving inventory capital detection, and walk-forward model evaluation (`MAE` & `RMSE` vs. 7-day SMA baseline).
-7. **Settings (`/settings`) — Protected:** Profile management with unique email & phone validation, business configuration (`Business Name`, `Currency`, `POS Sales Tax Rate %`, `Default Low-Stock Threshold`), password update with current-password verification and session token refresh, and active system preferences (`Low-Stock Alert Notifications`, `Automated AI Reorder Suggestions`).
-8. **Floating StockWise AI Business Assistant (`AIChatbot`):** Accessible across all authenticated pages at the bottom-right corner. Answers English and Bangla questions about live sales, revenue, profit, low-stock items, customer histories, specific invoices (`INV-XXXX`), tax calculation, and 14-day Holt demand forecasts using 12 strictly read-only PostgreSQL tools.
+## Live demo
 
----
+**Live URL: pending the first successful Vercel deployment.**
 
-## AI Business Assistant Setup & Provider Configuration
+Vercel is connected to this GitHub repository. After deployment, copy the production URL from the Vercel project dashboard and replace this status with a live link. No deployment URL has been verified yet.
 
-The chatbot backend (`server/utils/aiChatbot.js` and `server/utils/chatTools.js`) keeps all LLM credentials strictly server-side and never bundles any AI SDK into the frontend.
+Local frontend: [http://localhost:5173](http://localhost:5173)
 
-### Groq configuration (`server/.env`)
-```env
-AI_API_KEY=your_groq_api_key
-AI_MODEL=openai/gpt-oss-20b
-AI_BASE_URL=https://api.groq.com/openai/v1
-AI_PROVIDER_TIMEOUT_MS=30000
-CHAT_RATE_LIMIT_MAX=30
+## Preview
+
+![Dashboard with selected-month revenue, profit, and revenue comparison](client/public/images/dashboard-preview.png)
+
+| Inventory | Product sales insights |
+| --- | --- |
+| ![Product catalog with stock filters and SKU search](client/public/images/inventory-preview.png) | ![Product sales comparison and idle-stock analysis](client/public/images/insights-preview.png) |
+
+| Cash memo | Customers |
+| --- | --- |
+| ![Printable cash memo from a fictional sale](client/public/images/invoice-preview.png) | ![Fictional customer directory](client/public/images/customers-preview.png) |
+
+These are screenshots of the local application with browser demo data. They do not represent a hosted deployment or real business activity.
+
+## Demo access
+
+Open the live `/login` page when published, or `/login` on your local frontend.
+
+| Account | Email | Password |
+| --- | --- | --- |
+| Public portfolio visitor | `visitor@stockwise.example` | `HNcwra_z0cyC5T9fNQNDB4t-2gkoTxBV` |
+
+This dedicated staff account is intended for public demo access. In the interactive demo, business changes stay in the browser and reset on refresh or logout. It has no user-management privileges.
+
+You can also select **Create an account** on the login page. Public registration is available only when the server runs with `DEMO_READ_ONLY=true`; it creates a staff login, not a persistent shop workspace.
+
+**Owner access:** the provisioned super admin can open **Manage users** after signing in. Its credentials are kept in the local, Git-ignored `docs/PRIVATE_ACCESS.md` file. Owner credentials are not published in this README.
+
+Google sign-in appears when the OAuth configuration is complete. Email/password sign-in works independently.
+
+## What you can do
+
+### Dashboard
+
+- Select a month and compare it with the previous month.
+- Review revenue, profit, completed sales, and average sale value.
+- Switch the revenue comparison between cumulative and daily views.
+- Review top products, invoice payment status, recent sales, and customer balances.
+- Open checkout, inventory, and reports from the dashboard.
+
+### Products and inventory
+
+- Add and edit products with names, SKUs, categories, prices, costs, and stock quantities.
+- Search by product name or SKU, and filter or sort the catalog.
+- Review low-stock and out-of-stock products.
+- Record stock adjustments and inspect the stock movement history.
+- Keep the standard product form or configure optional text, number, and dropdown fields.
+- Use a separate SKU for each independently stocked variant.
+
+### Checkout and customers
+
+- Search products or scan an uploaded QR image/camera feed to locate a product.
+- Add items to a cart, change quantities, and apply discounts and configured tax.
+- Find a saved customer by name, phone, or email, or complete a walk-in sale.
+- Choose a payment method and review the total before confirming the sale.
+- Use full payment by default; optionally enable dues for saved customers.
+- Collect outstanding payments from invoice details when dues are enabled.
+- Browse customer records, purchase history, spending, and balances.
+
+QR scanning locates products for review. It does not automatically complete checkout or open external links. Camera scanning requires browser permission and HTTPS or localhost; uploaded-image scanning is also available.
+
+### Sales reports and cash memos
+
+- Search invoices by number, customer name, or phone.
+- Filter sales by all time, a month, or an inclusive date range.
+- Export every matching sale as CSV, including results beyond the visible first page.
+- Open an organized cash memo and print it or save it as PDF using the browser print dialog.
+- Keep invoice totals, discounts, tax, paid amounts, and balances together.
+
+Report date boundaries use Bangladesh time (`Asia/Dhaka`).
+
+### AI Insights
+
+- Analyze the last 7, 30, or 90 days, a month, or a custom range of up to 366 days.
+- Review stock alerts, restock quantities, estimated order cost, revenue, and profit.
+- Filter recommendations by priority and out-of-stock status.
+- Compare product sales by revenue or units sold with an interactive bar chart.
+- Inspect individual product quantities, revenue, and share of displayed sales.
+- Identify in-stock products with no sales in the selected period.
+- Export the complete insights report as CSV or a printable PDF.
+
+**Calculation methods:** the interactive browser demo estimates future demand from selected-period average daily sales. The database-backed implementation uses Holt forecasting, reorder points, safety-stock calculations, and available walk-forward evaluation metrics. Demo estimates do not claim Holt validation scores or calculated stockout probabilities. Suggestions use **current stock**, even when analyzing a historical sales period. Forecasts are estimates, not guarantees.
+
+### Groq business assistant
+
+- Ask questions about the workspace in English or Bangla.
+- In browser demo mode, the assistant receives a bounded fictional-data snapshot and has no database tools.
+- The database-backed assistant has approved read-only tools for business lookups.
+- Groq credentials stay on the server. Demand calculations work without a Groq key.
+
+### Settings and account access
+
+- Edit business settings, currency, tax, and notification preferences.
+- Choose full-payment or optional-due checkout rules.
+- Configure custom product fields.
+- Choose a workspace background or upload a local image.
+- Use confirmation dialogs before consequential inventory, sales, payment, and settings actions.
+
+## Roles
+
+| Role | Purpose |
+| --- | --- |
+| Visitor / staff | Explore the fictional browser demo and use its business workflows. |
+| Admin | Administrative business actions in database-backed mode, subject to the server's demo restrictions. |
+| Super admin | Manage real user accounts: search, create staff/admin users, edit names and roles, and delete eligible accounts. |
+
+The super admin is an `admin` account matching the server-only `SUPER_ADMIN_EMAIL`. Access is checked on the server, not granted by browser state. The owner cannot be deleted or demoted from the users page. Accounts with related business records cannot be deleted.
+
+User administration and registration affect actual account records in Neon. Product, customer, checkout, and business-setting changes in the interactive demo are browser-only.
+
+## How the demo stays useful
+
+Each fresh demo session starts with:
+
+- **12 products** across several retail categories.
+- **8 fictional customers**.
+- **360 fully paid sales** covering the latest **180 calendar days**.
+- Multi-item orders, discounts, cash/card/bKash payments, and idle inventory.
+
+Dates are generated relative to today. The demo remains useful in future months and years without manually changing seed dates. Current and previous-period charts have recent data.
+
+A running session keeps its data until refresh or logout; it is not silently reset while you work. Background appearance is stored separately in the current browser. Sample sales are fully paid because the default business model requires full payment; enable dues to try partial-payment workflows.
+
+## Technology
+
+| Layer | Stack |
+| --- | --- |
+| Frontend | React 18, Vite, React Router, Tailwind CSS and custom CSS |
+| Charts | Recharts |
+| API | Node.js, Express |
+| Database | PostgreSQL on Neon, Prisma ORM |
+| Authentication | JWT, bcrypt, optional Google Identity Services |
+| Assistant | Groq-compatible Chat Completions API |
+| QR decoding | jsQR |
+| Deployment | Vercel static frontend and Node API function |
+| Verification | Node test runner, Jest, Supertest, local Chromium checks |
+
+## Project structure
+
+```text
+stockwise-ai/
+├── api/index.js                 # Vercel API entry
+├── client/
+│   ├── public/images/           # Hero imagery and current app previews
+│   └── src/
+│       ├── components/          # Shared UI, charts, dialogs, cash memo
+│       ├── context/             # Authentication, demo mode, confirmations
+│       ├── lib/                 # API adapter, browser demo, export helpers
+│       └── pages/               # Home, login, dashboard, POS, insights, users
+├── server/
+│   ├── middleware/              # Authentication, permissions, demo guards
+│   ├── prisma/                  # Schema and migrations
+│   ├── routes/                  # REST endpoints
+│   ├── scripts/                 # Explicit account/test preparation
+│   ├── tests/                   # Mocked and database integration tests
+│   └── utils/                   # Forecasting, assistant, business helpers
+├── shared/                      # Shared analytics and date-period logic
+├── docs/                        # Setup, verification, architecture, deployment
+├── package.json                 # Root build and test commands
+└── vercel.json                  # Frontend/API routing and build settings
 ```
-The existing Chat Completions integration uses Groq's compatible endpoint and approved local read-only tools. Choose a tool-capable model available in your Groq account. See [Groq documentation](https://console.groq.com/docs/tool-use/overview). The key remains on the server. An empty key keeps the assistant visibly unconfigured (503); inventory forecasting remains available without an LLM.
 
-See [local setup](docs/local-setup.md) for Neon configuration, migrations, safe seeding, and tests.
+## Run locally
 
-### Approved Read-Only Business Data Tools (`server/utils/chatTools.js`)
-1. `get_dashboard_kpis` — Period-filtered KPIs (`today`, `last_7_days`, `last_30_days`, `this_month`, `all_time`).
-2. `get_sales_by_date_range` — Completed order count, subtotal, discount, collected tax, revenue, profit, and recent invoices.
-3. `get_revenue_and_profit` — Revenue, net profit (excluding collected tax), tax collected, and period-over-period change.
-4. `get_products_inventory` — Search/filter products by name, SKU, category, or stock status.
-5. `get_low_and_out_of_stock` — Lists all out-of-stock (`0 units`) and running-low (`<= threshold`) products.
-6. `get_top_selling_products` — 30-day top sellers by units and revenue plus slow-moving inventory.
-7. `get_customer_summaries` — Top customers by total spending and order count (with role-based phone masking for `staff` users).
-8. `get_customer_purchase_history` — Individual customer invoice history and reconciled spending.
-9. `get_invoice_details` — Exact line-item and persisted tax snapshot lookup for any invoice (`INV-XXXX`).
-10. `get_business_tax_settings` — Business currency, POS tax rate %, default threshold, and tax snapshot formula.
-11. `get_ai_forecasts_and_reorders` — 14-day Holt demand forecasts, 7-day lead-time ROP, safety stock, calibrated stockout risk, and walk-forward MAE evaluation.
-12. `get_app_help_and_methodology` — Step-by-step usage guides and forecasting/tax methodology explanations.
+### 1. Requirements
 
----
+- Node.js **22.12+** and npm; Vercel is configured for Node **22.x**.
+- A Neon PostgreSQL connection with SSL.
+- Optional Groq API key and Google Web OAuth client ID.
 
-## Security, Financial Accounting & Database Guarantees
+This demo uses one fictional-data Neon database. Local unit tests use mocks and do not need a second database.
 
-- **Strict JWT Authentication & RBAC:** All private endpoints (`/api/products*`, `/api/sales*`, `/api/customers*`, `/api/dashboard*`, `/api/ai*`, `/api/settings*`, `/api/chat*`) require a valid `Authorization: Bearer <JWT>` header. Missing, malformed, invalid, or expired tokens return `401 Unauthorized`. Administrative mutations enforce `adminOnly` (`403 Forbidden` for staff accounts).
-- **ACID Sales Transactions & Persisted Tax Snapshots (`PostgreSQL + Prisma`):**
-  - Checkout (`POST /api/sales`) consolidates duplicate product entries, locks and decrements product stock in deterministic UUID order, computes financials using integer minor-unit (paisa/cents) rounding:
-    $$\text{taxableAmount} = \max(0, \text{subtotal} - \text{discount})$$
-    $$\text{taxAmount} = \text{round}\left(\frac{\text{taxableAmount} \times \text{taxRate}}{100}\right), \quad \text{total} = \text{taxableAmount} + \text{taxAmount}$$
-    $$\text{profit} = \text{taxableAmount} - \text{totalCost}$$
-  - Persists `taxRate` and `taxAmount` directly on the `Sale` record (`20261019090000_add_sale_tax_snapshot`) so changing Business Settings `taxRate` later never alters historical invoices. Pre-migration legacy invoices retain `taxRate: null, taxAmount: null` (`isLegacyTax: true`).
+### 2. Clone and install
 
----
-
-## Automated Testing & Production Build
-
-Run local safety/provider tests without touching Neon:
 ```bash
-cd server
+git clone https://github.com/golammoula287/stockwise-ai.git
+cd stockwise-ai
+npm ci --prefix server
+npm ci --prefix client
+cp server/.env.example server/.env
+cp client/.env.example client/.env
+```
+
+Edit the two local `.env` files before continuing. Do not overwrite existing environment files when updating a working installation.
+
+### 3. Configure the API
+
+Minimum `server/.env` values for the interactive portfolio demo:
+
+```dotenv
+NODE_ENV=development
+PORT=5001
+DATABASE_URL=postgresql://USER:PASSWORD@YOUR_NEON_ENDPOINT/neondb?sslmode=require
+JWT_SECRET=replace_with_a_private_random_secret_at_least_32_characters
+CLIENT_URL=http://localhost:5173
+DEMO_READ_ONLY=true
+TEST_DATABASE_URL=
+```
+
+Optional assistant configuration:
+
+```dotenv
+AI_API_KEY=your_private_groq_key
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=openai/gpt-oss-20b
+AI_PROVIDER_TIMEOUT_MS=30000
+```
+
+The model must be available in your Groq account. If the assistant is unconfigured, the UI reports it; it does not invent an AI response.
+
+For Google login, set `GOOGLE_CLIENT_ID` on the server and the same public ID in `VITE_GOOGLE_CLIENT_ID` on the client. Follow [Google login setup](docs/google-login.md).
+
+### 4. Prepare the database and accounts
+
+```bash
+npm run prisma:generate --prefix server
+npm run prisma:migrate --prefix server
+```
+
+Migrations apply the checked-in schema. Review the target database before running them. Routine startup and Vercel builds do not run seeds or migrations automatically.
+
+Configure private `DEMO_LOGIN_EMAIL` and `DEMO_LOGIN_PASSWORD` values, then prepare the dedicated public **staff** login:
+
+```bash
+npm run demo:prepare --prefix server
+```
+
+For owner access, configure `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` privately, then run:
+
+```bash
+npm run admin:prepare --prefix server
+```
+
+This creates or updates only the specified owner account and resets its password. It does not erase or reseed business records. The browser's sample business data is generated automatically when demo mode is detected.
+
+### 5. Start development
+
+Run in separate terminals:
+
+```bash
+npm run dev --prefix server
+```
+
+```bash
+npm run dev --prefix client
+```
+
+| Service | Local URL |
+| --- | --- |
+| Frontend | http://localhost:5173 |
+| API | http://localhost:5001/api |
+| API health | http://localhost:5001/api/health |
+| Database readiness | http://localhost:5001/api/ready |
+
+The client can use `/api` through Vite's development proxy or the explicit local URL from `client/.env.example`.
+
+## Tests and production build
+
+From the repository root:
+
+```bash
 npm test
 ```
-The full PostgreSQL integration suite runs separately in GitHub Actions using a disposable database. This demo uses one Neon connection; leave `TEST_DATABASE_URL` empty locally.
 
-Verify the frontend production bundle:
+This runs the client tests and mocked server tests. Latest verified result: **26 client tests + 46 server tests = 72 passing tests**.
+
+Coverage includes business totals, stock rules, optional dues, custom fields, selected periods, rolling future-dated sample data, exports, authentication, Google login, registration, and super-admin authorization.
+
+Build the same-origin frontend and generate Prisma Client:
+
 ```bash
-cd client
-npm run build
+VITE_API_URL=/api npm run build
 ```
 
----
+Output: `client/dist`. This command does not publish the app or change database records.
 
-## Demo evidence
+The database integration suite is separate:
 
-These screenshots show the actual local application using fictional Neon sample data. Public deployment is pending; a live Groq inventory tool-call smoke check now passes.
+```bash
+npm run test:integration --prefix server
+```
 
-| Dashboard | Inventory |
+Run it only against a disposable PostgreSQL database prepared for tests. **Do not run the destructive integration suite against the shared Neon demo database.** CI provisions disposable PostgreSQL for integration checks.
+
+Local Chromium checks cover responsive layouts, checkout/invoices, confirmation dialogs, charts, exports, QR-image lookup, owner sign-in, and user-management forms. Actual user-management mutations in those browser checks are mocked; authorization tests exercise the API using database mocks. See [verification evidence](docs/verification.md) for exact checks and pending items.
+
+## Deploy on Vercel
+
+The repository includes a single-project Vercel configuration for both frontend and API.
+
+1. Import or select this GitHub repository in Vercel.
+2. Keep **Root Directory** at the repository root and use **Other** for the framework preset.
+3. Select Node.js **22.x**.
+4. Add private environment variables in the Vercel dashboard.
+5. Deploy the connected production branch.
+6. Verify the public app and API, then add its live URL near the top of this README.
+
+| Setting | Configuration |
 | --- | --- |
-| ![Dashboard KPIs](docs/screenshots/01-dashboard.png) | ![Products and stock](docs/screenshots/02-inventory.png) |
+| Install | `npm ci --prefix server && npm ci --prefix client` |
+| Build | `VITE_API_URL=/api npm run build` |
+| Static output | `client/dist` |
+| API entry | `api/index.js` |
+| Frontend deep links | SPA rewrite to `index.html` |
+| Database | Existing Neon PostgreSQL database |
 
-| Completed invoice | Demand insights |
+Required production variables include `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=production`, the exact `CLIENT_URL`, `DEMO_READ_ONLY=true`, and `SUPER_ADMIN_EMAIL`. Add Groq and Google values only for enabled integrations. Keep database URLs, passwords, JWT secrets, and AI keys out of `VITE_*` variables.
+
+When Vercel's Git integration is enabled, pushes to the configured production branch trigger deployments. This does not automatically edit the live URL in this README.
+
+Full instructions: [Vercel deployment guide](docs/vercel-deployment.md). The local production build passes; hosted deployment and public-origin smoke checks remain pending.
+
+## Important boundaries
+
+- This is a portfolio demo with fictional business records.
+- Browser demo changes are temporary; they are not saved as a permanent shop workspace.
+- Custom fields are available in the browser demo; variants use separate SKUs rather than generated variant combinations.
+- Camera QR scanning depends on the device and browser; real camera hardware has not been verified.
+- Google consent must be verified after valid OAuth configuration is supplied.
+- The browser-snapshot assistant's transport has been checked with mocks; live provider behavior must also be checked for the deployed environment.
+- Vercel's API function is configured for a 60-second maximum. Slow provider calls need timeout tuning or a suitable backend host.
+- In-memory API rate limits are per server/function instance. Use platform firewall rules or a shared limiter for dependable public abuse protection.
+- Role management and account records are real; the public visitor is never granted super-admin access.
+
+## Documentation
+
+| Guide | Contents |
 | --- | --- |
-| ![Verified checkout invoice](docs/screenshots/03-invoice.png) | ![Forecasts and restock suggestions](docs/screenshots/04-insights.png) |
+| [Local setup](docs/local-setup.md) | Environment, Neon, migrations, and local checks |
+| [Interactive demo](docs/interactive-demo.md) | Browser-memory behavior and workflows |
+| [Vercel deployment](docs/vercel-deployment.md) | Production configuration and post-publish checks |
+| [Google login](docs/google-login.md) | OAuth setup and verification |
+| [Verification](docs/verification.md) | Completed checks and remaining gaps |
+| [Architecture](docs/architecture.md) | Frontend/API organization and data flows |
+| [API reference](docs/api-documentation.md) | Existing REST and assistant endpoint contracts |
+| [Database design](docs/database-design.md) | Schema, relations, and accounting records |
+| [Known limitations](docs/known-limitations.md) | Scope and implementation limits |
 
-![Fictional customer records](docs/screenshots/05-customers.png)
+## Author and contact
 
-[Watch the 89-second captioned local walkthrough](docs/media/stockwise-walkthrough.webm). The recording predates the provider correction. The assistant now uses Groq, with a successful live read-only inventory lookup. Forecasting does not depend on Groq.
+**Golam Moula**
 
-## Documentation Index
+- [GitHub](https://github.com/golammoula287)
+- [Email](mailto:golammoula287@gmail.com)
+- [WhatsApp](https://wa.me/8801708084799)
 
-- [`docs/architecture.md`](docs/architecture.md) — System architecture, authentication flow, and PostgreSQL transaction design
-- [`docs/api-documentation.md`](docs/api-documentation.md) — Protected REST API endpoints, `/api/chat` contract, and error codes
-- [`docs/database-design.md`](docs/database-design.md) — PostgreSQL relational tables, tax snapshot migration, foreign keys, and ACID boundaries
-- [`docs/demo-checklist.md`](docs/demo-checklist.md) — Pre-deployment & demo verification checklist
-- [`docs/known-limitations.md`](docs/known-limitations.md) — Forecasting assumptions, chatbot scope, and production considerations
-
-- [`docs/deployment.md`](docs/deployment.md) — Render/Neon release, recovery, and verification handoff
-- [`docs/verification.md`](docs/verification.md) — Checks actually performed and remaining gates
-
-- [`docs/google-login.md`](docs/google-login.md) — Google Cloud client setup, invitation policy, and verification
-
-### Interactive demo
-
-With `DEMO_READ_ONLY=true`, the frontend enables a fictional browser-memory workspace: products, stock, customers, checkout, optional dues, custom fields, reports and QR lookup. Business changes reset on refresh and never modify the shared demo database. Signup creates staff logins; it does not create a persistent business workspace. See [interactive demo guide](docs/interactive-demo.md) for usage and limitations. Run the browser-data checks with `npm test --prefix client`.
+Built as an independent professional portfolio project. Sample results and screenshots demonstrate application behavior, not real clients, revenue, or forecast accuracy guarantees.

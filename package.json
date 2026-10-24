@@ -1,0 +1,10 @@
+{
+  "name": "stockwise-ai",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run prisma:generate --prefix server && npm run build --prefix client",
+    "test": "npm test --prefix client && npm test --prefix server"
+  },
+  "engines": { "node": "22.x" }
+}
