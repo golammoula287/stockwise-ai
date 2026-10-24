@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/insights', protect, async (req, res, next) => {
   try {
     const forceRecommendations = req.query.forceRecommendations === 'true';
-    const insights = await generateInsights({ forceRecommendations });
+    const insights = await generateInsights({ ...req.query, forceRecommendations });
     res.json(insights);
   } catch (err) {
     next(err);

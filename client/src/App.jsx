@@ -1,3 +1,4 @@
+import { ConfirmProvider } from './context/ConfirmContext';
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
@@ -23,7 +24,7 @@ function PageLoader() {
 export default function App() {
   const { user } = useAuth();
   return (
-    <Suspense fallback={<PageLoader />}>
+    <ConfirmProvider><Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
@@ -80,6 +81,6 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to={user ? '/dashboard' : '/'} replace />} />
       </Routes>
-    </Suspense>
+    </Suspense></ConfirmProvider>
   );
 }

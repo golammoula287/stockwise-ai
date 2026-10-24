@@ -75,7 +75,7 @@ Missing, malformed, invalid, or expired tokens return `401 Unauthorized`. Admin-
   - Body: `{ "message": "What is my revenue this month?", "history": [{ "role": "user" | "assistant", "content": "..." }] }`
   - Validation: `message` must be a non-empty string `<= 1000` characters; `history` is optional array `<= 20` items (only `user` and `assistant` roles are retained; spoofed `system` or `tool` roles are stripped).
   - Returns:
-    - `200 OK`: `{ "reply": "...", "configured": true, "context": { "dataSource": "postgresql", "period": "this_month", "toolsUsed": ["get_revenue_and_profit"], "model": "grok-4.7" } }`
+    - `200 OK`: `{ "reply": "...", "configured": true, "context": { "dataSource": "postgresql", "period": "this_month", "toolsUsed": ["get_revenue_and_profit"], "model": "openai/gpt-oss-20b" } }`
     - `400 Bad Request`: Missing/empty/oversized message or invalid history format
     - `401 Unauthorized`: Missing, malformed, or expired JWT
     - `429 Too Many Requests`: Rate limit exceeded

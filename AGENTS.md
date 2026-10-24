@@ -14,7 +14,7 @@
 
 ## Protect data and configuration
 - Never commit or print secrets, real `.env` values, privileged demo passwords, or customer data. Frontend `VITE_*` variables are public; keep AI keys server-side.
-- Use separate development, test, and public-demo databases. Run automated tests against an isolated test database.
+- User selected one fictional-data Neon demo database and no local test connection. Never run the destructive integration suite on it. Default local tests use mocks; full integration uses disposable PostgreSQL in CI.
 - Inspect seed behavior before invoking it; routine seeding must not destroy data. Never force-seed a live database.
 - Restrict production CORS to the intended frontend origin. Public demo access must not expose privileged accounts or unrestricted writes.
 - Follow the phase gates in `CONTEXT.md`; fix critical safety and correctness defects before launch.

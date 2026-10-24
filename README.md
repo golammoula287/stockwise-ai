@@ -2,7 +2,7 @@
 
 > Full-stack inventory, POS checkout, customer tracking, calibrated time-series demand forecasting, and PostgreSQL-grounded AI Business Assistant built with React, Node.js/Express, PostgreSQL, and Prisma ORM.
 
-**Repository:** [https://github.com/meherabmehu/stockwise-ai](https://github.com/meherabmehu/stockwise-ai)
+**Repository:** [https://github.com/golammoula287/stockwise-ai](https://github.com/golammoula287/stockwise-ai)
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### Unified Application Navigation (Route-Split with `React.lazy` & `Suspense`)
 1. **Home (`/`) — Public:** Overview of core capabilities, interactive preview cards, Features, About, and Administrator Contact form.
-2. **Login (`/login`) — Public:** JWT email/password authentication with login rate limiting, input validation, password visibility toggle, and explicit indication that third-party OAuth is disabled.
+2. **Login (`/login`) — Public:** JWT email/password authentication with login rate limiting, input validation, password visibility toggle, and Google Identity Services sign-in for invited accounts when GOOGLE_CLIENT_ID is configured.
 3. **Dashboard (`/dashboard`) — Protected:** KPI summary cards (`Total Products`, `Sales`, `Revenue & Profit`, `Low Stock Items`), lazy-loaded `Sales Overview` area chart (`Recharts`) with `This Year` (monthly) and `Last 30 Days` (3-day interval) views, live date range filters (`This Month`, `Last 30 Days`, `Last 7 Days`, `Today`, `All Time`), preference-aware low-stock alert bell, and `Recent Sales` table.
 4. **Products & Inventory (`/products`) — Protected:** Paginated product catalog with unique `SKU` badges, search (by name, SKU, or category), category/status/sort filters, `Low Stock` filter tab, `Stock History` audit ledger tab, `Categories` valuation tab, Product CRUD modal (`Admin`), and atomic integer stock adjustment modal (`±Stock`, `Admin`).
 5. **Sales & Customers (`/sales`) — Protected (Unified Navigation):** Single unified page with query-synchronized tabs (`/sales?tab=new`, `/sales?tab=history`, `/sales?tab=customers`; `/customers` redirects cleanly to `/sales?tab=customers`):
@@ -27,15 +27,15 @@
 
 The chatbot backend (`server/utils/aiChatbot.js` and `server/utils/chatTools.js`) keeps all LLM credentials strictly server-side and never bundles any AI SDK into the frontend.
 
-### Grok / xAI configuration (`server/.env`)
+### Groq configuration (`server/.env`)
 ```env
-AI_API_KEY=your_xai_api_key
-AI_MODEL=grok-4.7
-AI_BASE_URL=https://api.x.ai/v1
+AI_API_KEY=your_groq_api_key
+AI_MODEL=openai/gpt-oss-20b
+AI_BASE_URL=https://api.groq.com/openai/v1
 AI_PROVIDER_TIMEOUT_MS=30000
 CHAT_RATE_LIMIT_MAX=30
 ```
-The existing Chat Completions integration uses xAI's compatible endpoint and approved local read-only tools. Choose a tool-capable model available in your xAI account. See [xAI documentation](https://docs.x.ai/developers/model-capabilities/legacy/chat-completions). The key remains on the server. An empty key keeps the assistant visibly unconfigured (503); inventory forecasting remains available without an LLM.
+The existing Chat Completions integration uses Groq's compatible endpoint and approved local read-only tools. Choose a tool-capable model available in your Groq account. See [Groq documentation](https://console.groq.com/docs/tool-use/overview). The key remains on the server. An empty key keeps the assistant visibly unconfigured (503); inventory forecasting remains available without an LLM.
 
 See [local setup](docs/local-setup.md) for Neon configuration, migrations, safe seeding, and tests.
 
@@ -69,12 +69,12 @@ See [local setup](docs/local-setup.md) for Neon configuration, migrations, safe 
 
 ## Automated Testing & Production Build
 
-Apply migrations to the isolated test database (`stockwise_test`) and run the backend integration suite:
+Run local safety/provider tests without touching Neon:
 ```bash
 cd server
-npm run test:prepare
 npm test
 ```
+The full PostgreSQL integration suite runs separately in GitHub Actions using a disposable database. This demo uses one Neon connection; leave `TEST_DATABASE_URL` empty locally.
 
 Verify the frontend production bundle:
 ```bash
@@ -84,6 +84,22 @@ npm run build
 
 ---
 
+## Demo evidence
+
+These screenshots show the actual local application using fictional Neon sample data. Public deployment is pending; a live Groq inventory tool-call smoke check now passes.
+
+| Dashboard | Inventory |
+| --- | --- |
+| ![Dashboard KPIs](docs/screenshots/01-dashboard.png) | ![Products and stock](docs/screenshots/02-inventory.png) |
+
+| Completed invoice | Demand insights |
+| --- | --- |
+| ![Verified checkout invoice](docs/screenshots/03-invoice.png) | ![Forecasts and restock suggestions](docs/screenshots/04-insights.png) |
+
+![Fictional customer records](docs/screenshots/05-customers.png)
+
+[Watch the 89-second captioned local walkthrough](docs/media/stockwise-walkthrough.webm). The recording predates the provider correction. The assistant now uses Groq, with a successful live read-only inventory lookup. Forecasting does not depend on Groq.
+
 ## Documentation Index
 
 - [`docs/architecture.md`](docs/architecture.md) — System architecture, authentication flow, and PostgreSQL transaction design
@@ -91,3 +107,12 @@ npm run build
 - [`docs/database-design.md`](docs/database-design.md) — PostgreSQL relational tables, tax snapshot migration, foreign keys, and ACID boundaries
 - [`docs/demo-checklist.md`](docs/demo-checklist.md) — Pre-deployment & demo verification checklist
 - [`docs/known-limitations.md`](docs/known-limitations.md) — Forecasting assumptions, chatbot scope, and production considerations
+
+- [`docs/deployment.md`](docs/deployment.md) — Render/Neon release, recovery, and verification handoff
+- [`docs/verification.md`](docs/verification.md) — Checks actually performed and remaining gates
+
+- [`docs/google-login.md`](docs/google-login.md) — Google Cloud client setup, invitation policy, and verification
+
+### Interactive demo
+
+With `DEMO_READ_ONLY=true`, the frontend enables a fictional browser-memory workspace: products, stock, customers, checkout, optional dues, custom fields, reports and QR lookup. Business changes reset on refresh and never modify the shared demo database. Signup creates staff logins; it does not create a persistent business workspace. See [interactive demo guide](docs/interactive-demo.md) for usage and limitations. Run the browser-data checks with `npm test --prefix client`.

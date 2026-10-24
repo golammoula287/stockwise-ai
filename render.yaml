@@ -1,0 +1,59 @@
+# Preparation only: importing this file creates hosting resources.
+# Existing Neon database stays external; apply migrations as a controlled release step.
+services:
+  - type: web
+    name: stockwise-ai-api
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm ci --prefix server && npm run prisma:generate --prefix server
+    startCommand: npm start --prefix server
+    healthCheckPath: /api/ready
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        sync: false
+      - key: DEMO_READ_ONLY
+        value: "true"
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: openai/gpt-oss-20b
+      - key: AI_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: AI_PROVIDER_TIMEOUT_MS
+        value: "30000"
+
+  - type: web
+    name: stockwise-ai-client
+    runtime: static
+    rootDir: .
+    buildCommand: npm ci --prefix client && npm run build --prefix client
+    staticPublishPath: client/dist
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin

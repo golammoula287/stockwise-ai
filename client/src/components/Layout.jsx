@@ -1,6 +1,10 @@
+import useOverlay from '../lib/useOverlay';
+import Brand from './Brand';
+import { appearanceStyle, readAppearance } from '../lib/appearance';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { DemoModeContext } from '../context/DemoModeContext';
 import api from '../lib/api';
 import { formatCount } from '../lib/formatters';
 
@@ -8,18 +12,46 @@ const AIChatbot = lazy(() => import('./AIChatbot.jsx'));
 
 // Unified sidebar navigation with a single "Sales & Customers" entry (Task 2)
 const navItems = [
-  { to: '/dashboard', label: 'Dashboard', icon: '◧' },
-  { to: '/products', label: 'Products', icon: '📦' },
-  { to: '/sales', label: 'Sales & Customers', icon: '🛒' },
-  { to: '/ai-insights', label: 'AI Insights', icon: '✦' },
-  { to: '/settings', label: 'Settings', icon: '⚙' },
+  { to: '/dashboard', label: 'Dashboard', icon: 'overview' },
+  { to: '/products', label: 'Products', icon: 'inventory' },
+  { to: '/sales', label: 'Sales & Customers', icon: 'sales' },
+  { to: '/ai-insights', label: 'AI Insights', icon: 'insights' },
+  { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
+
+function NavigationIcon({ name }) {
+  const paths = {
+    overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+    inventory: 'm12 3 9 5-9 5-9-5 9-5Zm-9 5v9l9 5 9-5V8M12 13v9',
+    sales: 'M5 3h14v18l-3-2-4 2-4-2-3 2V3Zm4 5h6m-6 4h6',
+    insights: 'M4 3v17h17M8 14l4-4 4 2 5-7',
+    settings: 'M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6',
+  };
+  return <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d={paths[name]} /></svg>;
+}
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
+  const [appearance, setAppearance] = useState(() => readAppearance(user?.id || user?._id));
+  useEffect(() => {
+    const update = () => setAppearance(readAppearance(user?.id || user?._id));
+    update(); window.addEventListener('stockwise-appearance', update);
+    return () => window.removeEventListener('stockwise-appearance', update);
+  }, [user?.id, user?._id]);
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const drawerRef = useOverlay(mobileOpen, () => setMobileOpen(false));
+  useEffect(() => {
+    const desktop = matchMedia('(min-width:768px)');
+    const update = event => { if (event.matches) setMobileOpen(false); };
+    desktop.addEventListener('change', update);
+    const resize = () => setMobileOpen(false);
+    window.addEventListener('resize', resize);
+    return () => { desktop.removeEventListener('change', update); window.removeEventListener('resize', resize); };
+  }, []);
+  const [sandbox, setSandbox] = useState(false);
+  const [demoReadOnly, setDemoReadOnly] = useState(true);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifState, setNotifState] = useState({
     alertsEnabled: true,
@@ -29,6 +61,14 @@ export default function Layout({ children }) {
     outOfStockCount: 0,
     notifications: [],
   });
+
+  useEffect(() => {
+    let active = true;
+    api.get('/health').then(({ data }) => {
+      if (active) { setDemoReadOnly(data.demoReadOnly === true); setSandbox(data.demoSandbox === true); }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -105,12 +145,11 @@ export default function Layout({ children }) {
   const activeAlerts = notifState.notifications;
 
   return (
-    <div className="min-h-screen flex bg-[#f4f7fb] text-slate-800">
+    <div className="min-h-screen flex bg-slate-50 text-slate-800" style={appearanceStyle(appearance)}>
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-[225px] bg-[#111827] text-white flex-col shrink-0 select-none">
+      <aside className="hidden md:flex w-[225px] workspace-sidebar workspace-desktop-sidebar bg-[#091540] text-white flex-col shrink-0 select-none">
         <div className="px-5 py-5 flex items-center gap-2.5 font-bold text-lg tracking-tight border-b border-white/10">
-          <span className="bg-blue-600 w-7 h-7 rounded-lg grid place-items-center text-sm shadow">⬢</span>
-          <span>StockWise AI</span>
+          <Link to="/dashboard" aria-label="StockWise AI dashboard" className="workspace-brand"><Brand /></Link>
         </div>
         <nav className="px-3 py-4 space-y-1.5 flex-1" aria-label="Primary Sidebar Navigation">
           {navItems.map(item => (
@@ -125,7 +164,7 @@ export default function Layout({ children }) {
                 }`
               }
             >
-              <span className="text-base">{item.icon}</span>
+              <NavigationIcon name={item.icon} />
               <span>{item.label}</span>
             </NavLink>
           ))}
@@ -135,7 +174,6 @@ export default function Layout({ children }) {
             onClick={handleLogout}
             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-slate-300 hover:bg-white/10 hover:text-white text-sm font-medium transition"
           >
-            <span>↪</span>
             <span>Logout</span>
           </button>
         </div>
@@ -145,11 +183,10 @@ export default function Layout({ children }) {
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden flex">
           <div className="fixed inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-          <aside className="relative w-64 bg-[#111827] text-white flex flex-col z-10">
+          <aside ref={drawerRef} role="dialog" aria-modal="true" aria-label="Navigation" className="relative w-64 workspace-sidebar bg-[#091540] text-white flex flex-col z-10">
             <div className="px-5 py-4 flex items-center justify-between border-b border-white/10">
               <div className="flex items-center gap-2 font-bold text-lg">
-                <span className="bg-blue-600 w-7 h-7 rounded-lg grid place-items-center text-sm">⬢</span>
-                <span>StockWise AI</span>
+                <Link to="/dashboard" aria-label="StockWise AI dashboard" className="workspace-brand"><Brand /></Link>
               </div>
               <button
                 onClick={() => setMobileOpen(false)}
@@ -170,7 +207,7 @@ export default function Layout({ children }) {
                     }`
                   }
                 >
-                  <span>{item.icon}</span>
+                  <NavigationIcon name={item.icon} />
                   <span>{item.label}</span>
                 </NavLink>
               ))}
@@ -180,7 +217,7 @@ export default function Layout({ children }) {
                 onClick={handleLogout}
                 className="w-full text-left px-3.5 py-2.5 text-slate-300 hover:text-white text-sm font-medium"
               >
-                ↪ Logout
+                Logout
               </button>
             </div>
           </aside>
@@ -188,8 +225,8 @@ export default function Layout({ children }) {
       )}
 
       {/* Main Content Wrapper */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b border-slate-200/80 flex items-center justify-between px-4 md:px-7 sticky top-0 z-30">
+      <div className="workspace-content flex-1 flex flex-col min-w-0 md:ml-[225px]">
+        <header className="workspace-topbar h-16 bg-white border-b border-slate-200/80 flex items-center justify-between px-4 md:px-7 sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileOpen(true)}
@@ -199,12 +236,12 @@ export default function Layout({ children }) {
               ☰
             </button>
             <div className="md:hidden font-bold flex items-center gap-2">
-              <span className="bg-blue-600 text-white w-6 h-6 rounded grid place-items-center text-xs">⬢</span>
-              <span>StockWise AI</span>
+              <Link to="/dashboard" aria-label="StockWise AI dashboard"><Brand /></Link>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="workspace-header-actions flex items-center gap-4">
+            {(demoReadOnly || sandbox) && <details className="workspace-demo-status"><summary><span className="workspace-demo-dot" />Demo</summary><div role="note"><strong>{sandbox ? 'Interactive demo' : 'Read-only demo'}</strong><p>{sandbox ? 'Sample sales always cover the latest six months. Refresh loads a fresh, up-to-date demo and resets your changes. Shared data stays unchanged.' : 'Fictional sample data. Saving changes and checkout are disabled.'}</p></div></details>}
             {/* Low-Stock Notification Bell (IMP-18) */}
             <div className="relative">
               <button
@@ -213,7 +250,7 @@ export default function Layout({ children }) {
                 aria-label="Notifications"
                 aria-expanded={notifOpen}
               >
-                <span className="text-lg">🔔</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 {notifState.alertsEnabled && activeAlerts.length > 0 && (
                   <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center">
                     {activeAlerts.length}
@@ -221,7 +258,7 @@ export default function Layout({ children }) {
                 )}
               </button>
               {notifOpen && (
-                <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl p-3 z-50">
+                <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-32px)] bg-white border border-slate-200 rounded-2xl shadow-xl p-3 z-50">
                   <div className="flex items-center justify-between pb-2 border-b">
                     <span className="font-semibold text-sm">Low-Stock Alerts</span>
                     <span className="text-xs text-slate-500">
@@ -247,7 +284,7 @@ export default function Layout({ children }) {
                           to="/settings"
                           className="inline-block text-[11px] font-semibold text-blue-600 hover:underline"
                         >
-                          Manage in Settings → Preferences
+                          Manage notification preferences
                         </Link>
                       </div>
                     )}
@@ -301,7 +338,9 @@ export default function Layout({ children }) {
         </header>
 
         <main className="p-4 md:p-7 max-w-[1400px] w-full mx-auto flex-1">
-          {children}
+          <DemoModeContext.Provider value={demoReadOnly}>
+            {children}
+          </DemoModeContext.Provider>
         </main>
 
         {/* Floating AI Business Assistant (Task 1) */}

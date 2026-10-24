@@ -1,4 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useConfirm } from '../context/ConfirmContext';
+import SearchBox from '../components/SearchBox';
+import useOverlay from '../lib/useOverlay';
+import { isDemoSandbox } from '../lib/demoSandbox';
+import { useAuth } from '../context/AuthContext';
+import { useDemoMode } from '../context/DemoModeContext';
+import { useEffect, useRef, useState } from 'react';
 import api from '../lib/api';
 import {
   formatCount,
@@ -24,6 +30,10 @@ const productIcon = (name = '') => {
 };
 
 export default function Products() {
+  const demoReadOnly = useDemoMode();
+  const confirm = useConfirm();
+  const { user } = useAuth();
+  const canManage = (user?.role === 'admin' || isDemoSandbox()) && !demoReadOnly;
   const [products, setProducts] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -35,8 +45,14 @@ export default function Products() {
   const [tab, setTab] = useState('All Products');
 
   const [stockHistory, setStockHistory] = useState([]);
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockBusy, setStockBusy] = useState(false);
+  const [stockError, setStockError] = useState('');
+  const stockRequest = useRef(0);
   const [categoryStats, setCategoryStats] = useState([]);
 
+  const [productFields, setProductFields] = useState([]);
+  useEffect(() => { api.get('/settings').then(({ data }) => setProductFields(data.preferences?.productFields || [])).catch(() => {}); }, []);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({
@@ -48,11 +64,13 @@ export default function Products() {
     lowStockThreshold: 5,
     sku: '',
     description: '',
+    customFields: {},
   });
 
   const [adjustTarget, setAdjustTarget] = useState(null);
   const [adjustDelta, setAdjustDelta] = useState(10);
   const [adjustNote, setAdjustNote] = useState('');
+  const overlayRef = useOverlay(showModal || Boolean(adjustTarget), () => { setShowModal(false); setAdjustTarget(null); });
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -87,8 +105,13 @@ export default function Products() {
   const fetchMeta = async () => {
     try {
       if (tab === 'Stock History') {
-        const { data } = await api.get('/products/stock-history');
-        setStockHistory(data);
+        const request = ++stockRequest.current;
+        setStockBusy(true); setStockError('');
+        try {
+          const { data } = await api.get('/products/stock-history', { params: { search: stockSearch.trim(), limit: 200 } });
+          if (request === stockRequest.current) setStockHistory(data);
+        } catch(error) { if (request === stockRequest.current) setStockError(error.response?.data?.message || 'Could not search stock history.'); }
+        finally { if (request === stockRequest.current) setStockBusy(false); }
       } else if (tab === 'Categories') {
         const { data } = await api.get('/products/categories');
         setCategoryStats(data);
@@ -98,12 +121,16 @@ export default function Products() {
 
   useEffect(() => {
     fetchProducts();
-    fetchMeta();
   }, [search, category, status, sortBy, page, tab]);
+  useEffect(() => {
+    const timer = setTimeout(() => fetchMeta(), tab === 'Stock History' ? 250 : 0);
+    return () => { clearTimeout(timer); stockRequest.current++; };
+  }, [tab, stockSearch.trim()]);
 
   const handleSaveProduct = async (e) => {
     e.preventDefault();
     if (submitting) return;
+    if(editing && !await confirm({title:'Save product changes?',message:`Update ${editing.name}? Changes to price, stock, and product details take effect immediately for future sales.`,confirmLabel:'Save product changes'}))return;
     // Clear both feedback and error banners before submitting (IMP-12)
     setFeedback('');
     setErr('');
@@ -137,6 +164,7 @@ export default function Products() {
         lowStockThreshold: 5,
         sku: '',
         description: '',
+    customFields: {},
       });
       fetchProducts();
       fetchMeta();
@@ -164,6 +192,8 @@ export default function Products() {
       setErr(msg);
       return;
     }
+
+    if(!await confirm({title:'Update stock quantity?',message:`Change ${adjustTarget.name} stock by ${deltaNum>0?'+':''}${deltaNum} units? This updates available inventory immediately and records a stock adjustment.`,confirmLabel:'Update stock'}))return;
 
     // Build an accurate audit note that matches the sign of delta (fixes IMP-13)
     const trimmedNote = adjustNote.trim();
@@ -196,7 +226,7 @@ export default function Products() {
   };
 
   const handleDelete = async (p) => {
-    if (!window.confirm(`Are you sure you want to delete "${p.name}"?`)) {
+    if (!await confirm({title:'Delete product?',message:`Delete ${p.name} from the catalog? This cannot be undone in this session. Existing sales records are retained.`,confirmLabel:'Delete product',destructive:true})) {
       return;
     }
     // Always clear previous feedback before attempting deletion (fixes IMP-12)
@@ -235,9 +265,11 @@ export default function Products() {
               lowStockThreshold: 5,
               sku: '',
               description: '',
+    customFields: {},
             });
             setShowModal(true);
           }}
+          disabled={!canManage}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition"
         >
           + Add Product
@@ -292,7 +324,8 @@ export default function Products() {
 
         {/* Tab 3: Stock History */}
         {tab === 'Stock History' && (
-          <div className="overflow-x-auto">
+          <div><div className="history-search-row"><SearchBox value={stockSearch} onChange={value=>{if(value.trim()!==stockSearch.trim()){stockRequest.current++;setStockBusy(true);}setStockSearch(value);}} label="Search stock history" placeholder="Product name or SKU"/><span role="status" className="history-search-status">{stockBusy ? 'Searching…' : `${formatCount(stockHistory.length, 'movement')} · Up to 200 matches`}</span></div>{stockError && <p role="alert" className="history-search-error">{stockError}</p>}
+          <div className="workspace-table-scroll overflow-x-auto" tabIndex={0} aria-label="Stock history results" aria-busy={stockBusy}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-slate-400 border-b">
@@ -306,8 +339,8 @@ export default function Products() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {stockHistory.map(log => (
-                  <tr key={log._id} className="hover:bg-slate-50">
-                    <td className="py-3 font-medium text-slate-800">{log.productName}</td>
+                  <tr key={log._id || log.id} className="hover:bg-slate-50">
+                    <td className="py-3 font-medium text-slate-800">{log.productName}{log.sku && <span className="block text-[10px] font-normal text-slate-500 mt-1">{log.sku}</span>}</td>
                     <td className="py-3">
                       <span
                         className={`px-2 py-0.5 rounded text-[11px] font-semibold capitalize ${
@@ -333,10 +366,10 @@ export default function Products() {
                 ))}
               </tbody>
             </table>
-            {stockHistory.length === 0 && (
-              <div className="text-center py-8 text-xs text-slate-400">No stock history entries recorded yet.</div>
+            {!stockBusy && stockHistory.length === 0 && (
+              <div className="text-center py-8 text-xs text-slate-400">{stockSearch.trim() ? 'No stock movements match this product or SKU.' : 'No stock history entries recorded yet.'}</div>
             )}
-          </div>
+          </div></div>
         )}
 
         {/* Tab 4: Categories */}
@@ -430,7 +463,7 @@ export default function Products() {
             {loading ? (
               <div className="text-center py-10 text-xs text-slate-400">Loading inventory...</div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="workspace-table-scroll overflow-x-auto" tabIndex={0} aria-label="Scrollable data table">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-slate-400 border-b border-slate-100">
@@ -454,7 +487,7 @@ export default function Products() {
                               {productIcon(p.name)}
                             </span>
                             <div>
-                              <div>{p.name}</div>
+                              <div>{p.name}</div><div className="font-normal text-[10px] text-slate-500">{productFields.filter(field => p.customFields?.[field.id] !== undefined && p.customFields[field.id] !== '').map(field => `${field.label}: ${p.customFields[field.id]}`).join(' · ')}</div>
                               <div className="text-[10px] text-slate-400 font-normal">
                                 Threshold: {formatUnits(p.lowStockThreshold ?? 5)}
                               </div>
@@ -508,6 +541,7 @@ export default function Products() {
                               setAdjustDelta(10);
                               setAdjustNote('');
                             }}
+                            disabled={!canManage}
                             title="Adjust stock"
                             className="px-2 py-1 rounded border border-slate-200 hover:bg-blue-50 text-blue-600 font-semibold"
                           >
@@ -528,9 +562,11 @@ export default function Products() {
                                 lowStockThreshold: p.lowStockThreshold ?? 5,
                                 sku: p.sku || '',
                                 description: p.description || '',
+                                customFields: p.customFields || {},
                               });
                               setShowModal(true);
                             }}
+                            disabled={!canManage}
                             title="Edit product"
                             aria-label={`Edit ${p.name}`}
                             className="p-1.5 rounded border border-slate-200 hover:bg-slate-100 text-slate-600"
@@ -539,6 +575,7 @@ export default function Products() {
                           </button>
                           <button
                             onClick={() => handleDelete(p)}
+                            disabled={!canManage}
                             title="Delete product"
                             aria-label={`Delete ${p.name}`}
                             className="p-1.5 rounded border border-red-100 hover:bg-red-50 text-red-500"
@@ -599,8 +636,8 @@ export default function Products() {
 
       {/* Add / Edit Product Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
-          <form onSubmit={handleSaveProduct} className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-3 text-xs">
+        <div ref={overlayRef} role="dialog" aria-modal="true" aria-label={showModal ? 'Product editor' : 'Stock adjustment'} className="workspace-dialog fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
+          <form onSubmit={handleSaveProduct} className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-3 text-xs max-h-[90svh] overflow-y-auto">
             <h3 className="font-bold text-base text-slate-900">{editing ? 'Edit Product' : 'Add New Product'}</h3>
             {modalErr && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-xl">
@@ -614,7 +651,7 @@ export default function Products() {
                   required
                   value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g., Wireless Mouse"
+                  aria-label="Product name" placeholder="e.g., Wireless Mouse"
                   className="w-full border rounded-xl px-3 py-2 outline-none focus:border-blue-500"
                 />
               </div>
@@ -623,7 +660,7 @@ export default function Products() {
                 <input
                   value={form.sku}
                   onChange={e => setForm({ ...form, sku: e.target.value.toUpperCase() })}
-                  placeholder="e.g., MS-011"
+                  aria-label="Product SKU" placeholder="e.g., MS-011"
                   className="w-full border rounded-xl px-3 py-2 font-mono outline-none focus:border-blue-500"
                 />
               </div>
@@ -662,7 +699,7 @@ export default function Products() {
                   min="0"
                   step="0.01"
                   required
-                  value={form.price}
+                  aria-label="Selling price" value={form.price}
                   onChange={e => setForm({ ...form, price: e.target.value })}
                   className="w-full border rounded-xl px-3 py-2"
                 />
@@ -673,7 +710,7 @@ export default function Products() {
                   type="number"
                   min="0"
                   step="0.01"
-                  value={form.cost}
+                  aria-label="Unit cost" value={form.cost}
                   onChange={e => setForm({ ...form, cost: e.target.value })}
                   placeholder="Optional"
                   className="w-full border rounded-xl px-3 py-2"
@@ -686,13 +723,14 @@ export default function Products() {
                   min="0"
                   step="1"
                   required
-                  value={form.stock}
+                  aria-label="Stock quantity" value={form.stock}
                   onChange={e => setForm({ ...form, stock: e.target.value })}
                   className="w-full border rounded-xl px-3 py-2"
                 />
               </div>
             </div>
             <div>
+              {productFields.length > 0 && <fieldset className="space-y-3 mb-4"><legend className="font-semibold text-xs mb-3">Product details</legend>{productFields.map(field => <label key={field.id} className="block text-xs text-slate-600">{field.label}{field.required ? ' *' : ''}{field.type === 'select' ? <select required={field.required} className="block border rounded-lg w-full p-2 mt-1" value={form.customFields?.[field.id] || ''} onChange={event => setForm({ ...form, customFields: { ...form.customFields, [field.id]: event.target.value } })}><option value="">Select {field.label}</option>{(field.options || []).map(option => <option key={option}>{option}</option>)}</select> : <input type={field.type === 'number' ? 'number' : 'text'} step={field.type === 'number' ? 'any' : undefined} maxLength={200} required={field.required} value={form.customFields?.[field.id] ?? ''} onChange={event => setForm({ ...form, customFields: { ...form.customFields, [field.id]: event.target.value } })} className="block border rounded-lg w-full p-2 mt-1" />}</label>)}</fieldset>}
               <label className="block text-slate-600 mb-1 font-medium">Description</label>
               <input
                 value={form.description}
@@ -715,7 +753,7 @@ export default function Products() {
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || !canManage}
                 className="px-5 py-2 bg-blue-600 text-white rounded-xl font-semibold disabled:opacity-50"
               >
                 {submitting ? 'Saving...' : editing ? 'Update Product' : 'Create Product'}
@@ -727,7 +765,7 @@ export default function Products() {
 
       {/* Stock Adjustment Modal */}
       {adjustTarget && (
-        <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
+        <div ref={overlayRef} role="dialog" aria-modal="true" aria-label={showModal ? 'Product editor' : 'Stock adjustment'} className="workspace-dialog fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
           <form onSubmit={handleAdjustStock} className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-3 text-xs">
             <h3 className="font-bold text-base text-slate-900">Adjust Stock — {adjustTarget.name}</h3>
             <p className="text-slate-500">
@@ -790,7 +828,7 @@ export default function Products() {
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || !canManage}
                 className="px-5 py-2 bg-blue-600 text-white rounded-xl font-semibold disabled:opacity-50"
               >
                 {submitting ? 'Applying...' : 'Apply Adjustment'}

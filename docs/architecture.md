@@ -2,7 +2,7 @@
 
 ## System Overview
 StockWise AI is a full-stack relational web application organized into two packages:
-- **`client/`**: React 18 single-page application (Vite + React Router 6 + TailwindCSS + Recharts) implementing the 7 required views (`Home`, `Login`, `Dashboard`, `Products & Inventory`, `Sales & Customers`, `AI Insights`, `Settings`).
+- **`client/`**: React 18 single-page application (Vite + React Router 7 + TailwindCSS + Recharts) implementing the 7 required views (`Home`, `Login`, `Dashboard`, `Products & Inventory`, `Sales & Customers`, `AI Insights`, `Settings`).
 - **`server/`**: Express 4 REST API using PostgreSQL and Prisma ORM (`@prisma/client`), JWT authentication, `express-validator` request validation, ACID transactional POS checkout, and an embedded time-series demand forecasting engine.
 
 ## Request & Transaction Flow
@@ -23,4 +23,4 @@ Express Router (/api/*)
 ## Database Connection Policy (`server/config/db.js`)
 - **Production:** Requires an explicit `DATABASE_URL` pointing to a persistent PostgreSQL database. Missing configuration throws an explicit startup error.
 - **Development:** Uses `DATABASE_URL` from `server/.env` (defaults to `postgresql://postgres:postgres@localhost:5432/stockwise?schema=public`).
-- **Automated Testing (`NODE_ENV=test`):** Connects to an isolated PostgreSQL test database (`TEST_DATABASE_URL` or `postgresql://postgres:postgres@localhost:5432/stockwise_test?schema=public`) so all ACID transactions, rollbacks, and concurrency tests execute against real PostgreSQL tables without touching development or production data.
+- **Automated Testing:** Default `npm test` uses mocked safety/provider checks. Full PostgreSQL integration runs in GitHub Actions against disposable PostgreSQL. Local `test:prepare` and `test:integration` require an explicitly isolated `TEST_DATABASE_URL`; the demo Neon database must never be used.

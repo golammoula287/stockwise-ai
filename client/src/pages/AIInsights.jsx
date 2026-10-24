@@ -1,409 +1,126 @@
+import ProductSalesChart from '../components/ProductSalesChart';
+import { useConfirm } from '../context/ConfirmContext';
+import { insightsPeriod } from '../../../shared/insightsPeriod.mjs';
+import { currentBusinessMonth } from '../../../shared/dashboardAnalytics.mjs';
 import { useEffect, useState } from 'react';
+import { isDemoSandbox } from '../lib/demoSandbox';
+import { useDemoMode } from '../context/DemoModeContext';
+import { useAuth } from '../context/AuthContext';
+import { downloadInsights, printInsights, insightDate } from '../lib/insightsReport.mjs';
+import SearchBox from '../components/SearchBox';
 import api from '../lib/api';
-import { formatCount, formatUnits, formatSignedUnits, formatCurrency } from '../lib/formatters';
+import { formatUnits, formatCurrency } from '../lib/formatters';
 
 export default function AIInsights() {
-  const [tab, setTab] = useState('Overview');
+  const demoReadOnly = useDemoMode();
+  const confirm = useConfirm();
+  const { user } = useAuth();
+  const [periodMode,setPeriodMode]=useState('30');
+  const [month,setMonth]=useState(currentBusinessMonth);
+  const [from,setFrom]=useState('');
+  const [to,setTo]=useState('');
+  const [appliedPeriod,setAppliedPeriod]=useState({days:30});
+  const [periodError,setPeriodError]=useState('');
   const [data, setData] = useState(null);
+  const [currency, setCurrency] = useState('৳');
+  const [generatedAt, setGeneratedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [restockingId, setRestockingId] = useState(null);
   const [err, setErr] = useState('');
-  const [restockMsg, setRestockMsg] = useState('');
-
-  const load = async () => {
-    setLoading(true);
+  const [message, setMessage] = useState('');
+  const [search, setSearch] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const sandbox = isDemoSandbox();
+  const load = async (params=appliedPeriod) => {
+    setLoading(true); setErr('');
     try {
-      const res = await api.get('/ai/insights');
-      setData(res.data);
-    } catch (e) {
-      setErr(e.response?.data?.message || 'Failed to load AI insights');
-    } finally {
-      setLoading(false);
-    }
+      const [res, settings] = await Promise.all([api.get('/ai/insights',{params}), api.get('/settings')]);
+      setAppliedPeriod(params); setData(res.data); setGeneratedAt(res.data.generatedAt || new Date().toISOString());
+      setCurrency(settings.data.business?.currency || '৳');
+    } catch (e) { setErr(e.response?.data?.message || 'Could not load insights. Please try again.'); }
+    finally { setLoading(false); }
   };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const quickRestock = async (rec) => {
+  useEffect(() => { load(); }, []);
+  const quickRestock = async rec => {
     if (restockingId) return;
-    // Always clear previous success message before attempting restock (fixes IMP-12)
-    setRestockMsg('');
-    setErr('');
-    setRestockingId(rec.productId);
+    if(!await confirm({title:'Add stock to inventory?',message:`Add ${formatUnits(rec.suggested)} to ${rec.product}? Current stock: ${rec.stock}. New stock: ${Number(rec.stock)+Number(rec.suggested)}. Only confirm after the goods have arrived. This updates inventory immediately; it does not place a supplier order.`,confirmLabel:'Confirm stock received'}))return;
+    setMessage(''); setErr(''); setRestockingId(rec.productId);
     try {
-      await api.patch(`/products/${rec.productId}/stock`, {
-        delta: rec.suggested,
-        note: `AI recommended restock (${formatSignedUnits(rec.suggested)})`,
-      });
-      setRestockMsg(`Restocked "${rec.product}" by ${formatSignedUnits(rec.suggested)}.`);
-      load();
-    } catch (e) {
-      setErr(e.response?.data?.message || 'Failed to restock product');
-    } finally {
-      setRestockingId(null);
-    }
+      await api.patch(`/products/${rec.productId}/stock`, { delta: rec.suggested, note: `Insights restock recommendation: ${formatUnits(rec.suggested)}` });
+      setMessage(`Added ${formatUnits(rec.suggested)} to ${rec.product}.`); await load();
+    } catch (e) { setErr(e.response?.data?.message || 'Could not restock this product.'); }
+    finally { setRestockingId(null); }
   };
-
-  if (loading) {
-    return (
-      <div className="bg-white border rounded-2xl p-10 text-center text-slate-500 text-sm">
-        Running Holt time-series demand forecasting &amp; stockout risk model...
-      </div>
-    );
-  }
-  if (err && !data) {
-    return (
-      <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-red-700 text-sm">
-        {err}
-      </div>
-    );
-  }
-
-  const thresholdAlertCount = data.thresholdAlertCount ?? data.lowStockCount ?? 0;
-  const forecastReorderCount = data.forecastReorderCount ?? data.eligibleForecastReorderCount ?? 0;
-  const enabledRecommendationCount = data.enabledRecommendationCount ?? data.recommendations.length;
-  const isSuggestionsDisabled = data.autoReorderEnabled === false;
-
-  const fallbackDisabledText =
-    thresholdAlertCount > 0
-      ? `${formatCount(thresholdAlertCount, 'product is', 'products are')} below ${
-          thresholdAlertCount === 1 ? 'its low-stock threshold' : 'their low-stock thresholds'
-        }. Automated reorder recommendations are disabled in Preferences.`
-      : 'All products are above their low-stock thresholds. Automated reorder recommendations are disabled in Preferences.';
-
-  const disabledSummaryMessage = data.disabledMessage || fallbackDisabledText;
-
+  const recommendations = data?.recommendations || [];
+  const filters = [{ key: 'all', label: 'All products', count: recommendations.length }, { key: 'urgent', label: 'High priority', count: recommendations.filter(r=>r.priority==='High').length }, { key: 'empty', label: 'Out of stock', count: recommendations.filter(r=>r.stock===0).length }];
+  const filtered = recommendations.filter(r=>`${r.product} ${r.sku||''}`.toLowerCase().includes(search.trim().toLowerCase()) && (priorityFilter==='all' || (priorityFilter==='urgent' ? r.priority==='High' : r.stock===0)));
+  const topProducts = [...(data?.topProducts || [])].sort((a,b)=>(b.revenue||0)-(a.revenue||0));
+  const totalCost = recommendations.reduce((sum,r)=>sum+(r.estimatedCost||0),0);
+  const money = value => formatCurrency(value,currency);
+  const options = { currency, sandbox, generatedAt };
+  const applyPeriod=e=>{e.preventDefault();const params=periodMode==='month'?{month}:periodMode==='range'?{startDate:from,endDate:to}:{days:Number(periodMode)};try{if(periodMode==='month'&&!month)throw Error('Choose a month.');if(periodMode==='range'&&(!from||!to))throw Error('Choose both dates.');insightsPeriod(params);setPeriodError('');setMessage('');load(params);}catch(error){setPeriodError(error.message);}};
+  const exportReport = type => {
+    try {
+      if(type==='csv') { downloadInsights(data,options); setMessage('The full insights report has been downloaded.'); }
+      else if(!printInsights(data,options)) setErr('Allow popups for this site to open the printable report.');
+    } catch (_) { setErr('Could not export the report. Please try again.'); }
+  };
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-extrabold text-xl text-slate-900">AI Insights</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Calibrated 14-day Holt demand forecasting, lead-time reorder points, and stockout risk analysis.
-          </p>
+    <div className="insights-page" aria-busy={loading}>
+      <header className="insights-header">
+        <div><h1>AI Insights</h1><p>Understand demand. Prioritize your next stock order.</p></div>
+        <div className="insights-actions">
+          <button onClick={()=>load()} disabled={loading || Boolean(restockingId)}>Refresh</button>
+          <button onClick={()=>exportReport('pdf')} disabled={!data || loading}>Print / PDF</button>
+          <button className="insights-primary" onClick={()=>exportReport('csv')} disabled={!data || loading}>Export CSV</button>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-semibold">
-            Low-Stock Threshold Alerts: {thresholdAlertCount}
-          </span>
-          <span className="px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 font-semibold">
-            Proactive Forecast Reorders: {forecastReorderCount}
-          </span>
-          <span
-            className={`px-3 py-1.5 rounded-xl border font-semibold ${
-              isSuggestionsDisabled
-                ? 'bg-slate-100 border-slate-300 text-slate-600'
-                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-            }`}
-          >
-            Automated AI Suggestions: {isSuggestionsDisabled ? 'Disabled' : `Enabled (${enabledRecommendationCount})`}
-          </span>
-        </div>
-      </div>
-
-      {/* Underline Tabs */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl px-5 pt-3 shadow-sm">
-        <div className="flex gap-6 text-xs font-semibold">
-          {['Overview', 'Recommendations', 'Demand Analysis'].map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`pb-3 border-b-2 transition ${
-                tab === t
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {restockMsg && (
-        <div
-          role="status"
-          className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-4 py-2.5 rounded-xl flex justify-between"
-        >
-          <span>✓ {restockMsg}</span>
-          <button onClick={() => setRestockMsg('')} aria-label="Dismiss message">
-            ✕
-          </button>
-        </div>
-      )}
-      {err && (
-        <div
-          role="alert"
-          className="bg-red-50 border border-red-200 text-red-700 text-xs px-4 py-2.5 rounded-xl flex justify-between"
-        >
-          <span>⚠ {err}</span>
-          <button onClick={() => setErr('')} aria-label="Dismiss error">
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* AI Business Summary Banner */}
-      <div className="bg-gradient-to-r from-blue-50 via-indigo-50/60 to-emerald-50 border border-blue-200/70 rounded-2xl p-5 flex items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="w-11 h-11 rounded-full bg-white border border-blue-100 shadow-sm grid place-items-center text-blue-600 font-bold text-lg shrink-0">
-            📈
+      </header>
+      <form className="insights-period" onSubmit={applyPeriod}><fieldset disabled={loading || Boolean(restockingId)}><legend>Analysis period</legend><div className="insights-period-fields">
+        <label>Time period<select aria-label="Time period" value={periodMode} onChange={e=>setPeriodMode(e.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="month">Choose month</option><option value="range">Custom date range</option></select></label>
+        {periodMode==='month'&&<label>Month<input type="month" min="2000-01" max={currentBusinessMonth()} value={month} onChange={e=>setMonth(e.target.value)}/></label>}
+        {periodMode==='range'&&<><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label></>}
+        <button type="submit">{loading?'Loading…':'Apply period'}</button></div></fieldset>{periodError&&<p role="alert">{periodError}</p>}</form>
+      {err && <div role="alert" className="insights-notice insights-error"><span>{err}</span><button onClick={()=>setErr('')} aria-label="Dismiss error">×</button></div>}
+      {message && <div role="status" className="insights-notice"><span>{message}</span><button onClick={()=>setMessage('')} aria-label="Dismiss message">×</button></div>}
+      {!data ? <div className="insights-empty">{loading ? 'Preparing your insights…' : <><p>Insights are unavailable right now.</p><button onClick={()=>load()}>Try again</button></>}</div> : <>
+        <div className="insights-meta"><span>{sandbox ? 'Demo · daily-average estimates' : '14-day demand forecast'}</span><span>Period: {data.period?.label || 'Last 30 days'} · {data.period?.days || 30} days</span><span>Updated {insightDate(generatedAt)} · Bangladesh time</span></div>
+        <section className="insights-metrics" aria-label="Inventory priorities">
+          <div><span>Low-stock alerts</span><strong>{data.thresholdAlertCount ?? data.lowStockCount ?? 0}</strong><p>At or below the stock threshold</p></div>
+          <div><span>Forecast reorders</span><strong>{data.forecastReorderCount ?? 0}</strong><p>Additional demand-based alerts</p></div>
+          <div><span>Recommended order cost</span><strong>{money(totalCost)}</strong><p>{recommendations.length} suggested {recommendations.length===1?'order':'orders'} at product cost</p></div>
+          <div><span>Revenue in period</span><strong>{money(data.revenueThisMonth ?? 0)}</strong><p>Profit: {money(data.profitThisMonth ?? 0)}</p></div>
+        </section>
+        <section className="insights-summary"><h2>Your next steps</h2><p>{data.summary}</p><span>{sandbox ? 'Estimates use sales in the selected period and current stock. Demo changes reset on refresh.' : 'Demand forecasts use selected-period sales and current stock. Review suggested quantities before ordering.'} Forecasts are not guarantees.</span></section>
+        <section className="insights-panel">
+          <div className="insights-section-heading"><div><h2>Restock priorities</h2><p>Choose a priority, review the suggestion, then add stock when it arrives.</p></div><span className="insights-status">Suggestions {data.autoReorderEnabled===false?'off':'on'}</span></div>
+          {data.autoReorderEnabled===false && <p className="insights-muted-note">{data.disabledMessage || 'Reorder suggestions are disabled. Enable them in Settings → Preferences to see suggested quantities.'}</p>}
+          <div className="insights-quick-filters" role="group" aria-label="Filter restock recommendations">{filters.map(filter=><button key={filter.key} aria-pressed={priorityFilter===filter.key} onClick={()=>setPriorityFilter(filter.key)}>{filter.label}<span>{filter.count}</span></button>)}</div>
+          <div className="insights-search"><SearchBox label="Search restock recommendations" placeholder="Product name or SKU" value={search} onChange={setSearch}/><span role="status">{filtered.length} of {recommendations.length} recommendations</span></div>
+          <div className="insights-table-scroll" tabIndex={0} role="region" aria-label="Restock recommendations">
+            <table className="insights-table"><thead><tr><th>Product</th><th>Stock / threshold</th><th>14-day demand</th><th>Suggested order</th><th>Estimated cost</th><th>Action</th></tr></thead><tbody>
+              {filtered.map(rec=><tr key={rec.productId || rec.product}>
+                <td><strong>{rec.product}</strong><span>{rec.sku || 'No SKU'}</span><span className={`insights-priority ${rec.priority==='High'?'is-high':'is-normal'}`}>{rec.priority || 'Normal'} priority</span><details><summary>See recommendation details</summary><p>{rec.explainability || (rec.triggerType==='threshold'?'Stock has reached its low-stock threshold.':'Expected demand has reached the reorder point.')}</p><p>Safety stock: {formatUnits(rec.safetyStock)} · Reorder point: {formatUnits(rec.reorderPoint ?? rec.safetyStock)}</p><p>14-day stockout risk: {rec.stockoutProbability == null ? 'Not calculated for demo estimates' : `${rec.stockoutProbability}%`}</p></details></td>
+                <td><strong>{formatUnits(rec.stock)}</strong><span>Threshold: {rec.lowStockThreshold}</span></td>
+                <td>{formatUnits(rec.forecast14d)}</td><td><strong>{formatUnits(rec.suggested)}</strong><span>{rec.triggerLabel || (rec.triggerType==='threshold'?'Low stock':'Forecast demand')}</span></td><td>{money(rec.estimatedCost || 0)}</td>
+                <td><button className="insights-restock" onClick={()=>quickRestock(rec)} disabled={Boolean(restockingId) || loading || demoReadOnly || (user?.role!=='admin' && !sandbox)}>{restockingId===rec.productId?'Adding…':`Add ${rec.suggested} units`}</button></td>
+              </tr>)}
+              {!filtered.length && <tr><td colSpan={6} className="insights-empty">{search.trim() || priorityFilter!=='all'?<><p>No recommendations match your filters.</p><button onClick={()=>{setSearch('');setPriorityFilter('all');}}>Clear filters</button></>:data.autoReorderEnabled===false?'Suggestions are currently disabled.':'No restock recommendations right now.'}</td></tr>}
+            </tbody></table>
           </div>
-          <div>
-            <div className="text-xs font-extrabold text-blue-700">AI Business Summary</div>
-            <p className="text-sm text-slate-800 font-medium mt-1 leading-relaxed">{data.summary}</p>
-            <div className="text-[11px] text-slate-500 mt-1">
-              {isSuggestionsDisabled ? (
-                <span>{disabledSummaryMessage}</span>
-              ) : (
-                <span>
-                  Note: Dashboard &ldquo;Low Stock Items&rdquo; ({thresholdAlertCount}) counts items at or below their static threshold, while AI Insights ({enabledRecommendationCount}) combines threshold alerts ({thresholdAlertCount}) with proactive 14-day demand forecast reorders ({forecastReorderCount}).
-                </span>
-              )}
-            </div>
-          </div>
+          <p className="insights-panel-footnote">Adding stock updates inventory immediately. It does not place a supplier order. Exports include the full report, regardless of search.</p>
+        </section>
+        <div className="insights-analysis-grid">
+          <ProductSalesChart products={topProducts} currency={currency} period={data.period?.label}/>
+          <section className="insights-panel"><div className="insights-section-heading"><div><h2>Slow-moving inventory</h2><p>Current stock with no sales in the selected period</p></div></div>
+            <div className="insights-slow-list">{(data.slowMoving||[]).map(p=><div key={p.productId||p.product}><div><strong>{p.product}</strong><span>{p.category || 'Uncategorized'} · {formatUnits(p.stock)} in stock</span><p>{p.suggestion || 'Review pricing, placement, or promotions before reordering.'}</p></div><div><strong>{money(p.tiedCapital||0)}</strong><span>Capital at cost</span></div></div>)}{!data.slowMoving?.length&&<p className="insights-empty">No idle-stock products found in this analysis.</p>}</div>
+          </section>
         </div>
-        <div className="hidden sm:flex w-14 h-14 rounded-2xl bg-white/90 border border-blue-100 shadow-sm items-center justify-center text-3xl shrink-0">
-          🤖
-        </div>
-      </div>
-
-      {/* Overview & Recommendations */}
-      {(tab === 'Overview' || tab === 'Recommendations') && (
-        <div className="grid lg:grid-cols-12 gap-5">
-          {/* Left: Stock Recommendations */}
-          <div className="lg:col-span-7 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-bold text-sm text-slate-900">
-                Stock Recommendations ({enabledRecommendationCount})
-              </h2>
-              <button
-                onClick={() => setTab('Recommendations')}
-                className="text-xs font-semibold text-blue-600 hover:underline"
-              >
-                View All
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {data.recommendations.map(rec => (
-                <div
-                  key={rec.productId || rec.product}
-                  className="flex flex-wrap items-center justify-between gap-3 border border-slate-100 hover:border-slate-200 rounded-xl p-3.5"
-                >
-                  <div className="flex items-start gap-3 flex-1 min-w-[240px]">
-                    <span className="w-10 h-10 bg-slate-100 rounded-xl grid place-items-center text-base shrink-0">
-                      {rec.product.toLowerCase().includes('keyboard')
-                        ? '⌨'
-                        : rec.product.toLowerCase().includes('bag')
-                        ? '🎒'
-                        : '🖱'}
-                    </span>
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-bold text-slate-900">{rec.product}</span>
-                        {rec.sku && (
-                          <span className="font-mono text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                            {rec.sku}
-                          </span>
-                        )}
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                            rec.triggerType === 'threshold'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                          }`}
-                        >
-                          {rec.triggerLabel || (rec.triggerType === 'threshold' ? 'Threshold Alert' : 'Forecast Reorder')}
-                        </span>
-                      </div>
-
-                      <div className="text-[11px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
-                        <span>
-                          Stock: <strong className="text-slate-800">{formatUnits(rec.stock)}</strong> (Threshold: {formatUnits(rec.lowStockThreshold)})
-                        </span>
-                        <span>
-                          14d Forecast: <strong className="text-slate-800">{formatUnits(rec.forecast14d)}</strong> ({rec.forecast14dContinuous ?? rec.forecast14d})
-                        </span>
-                        <span>
-                          Safety Stock: <strong>{formatUnits(rec.safetyStock)}</strong> · ROP: <strong>{formatUnits(rec.reorderPoint ?? rec.safetyStock)}</strong>
-                        </span>
-                        <span>
-                          14d Stockout Risk: <strong className={rec.stockoutProbability >= 70 ? 'text-red-600' : 'text-slate-800'}>{rec.stockoutProbability}%</strong>
-                        </span>
-                      </div>
-
-                      <div className="text-[11px] text-blue-700 font-semibold">
-                        Recommended Order: {formatSignedUnits(rec.suggested)} (Est. cost: {formatCurrency(rec.estimatedCost || 0)})
-                      </div>
-
-                      {rec.explainability && (
-                        <div className="text-[10px] text-slate-400">{rec.explainability}</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold ${
-                        rec.priority === 'High'
-                          ? 'bg-red-50 text-red-600 border border-red-200'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`}
-                    >
-                      {rec.priority} Priority
-                    </span>
-                    <button
-                      onClick={() => quickRestock(rec)}
-                      disabled={restockingId === rec.productId}
-                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-semibold disabled:opacity-50"
-                    >
-                      {restockingId === rec.productId ? 'Restocking...' : `Restock +${rec.suggested}`}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {data.recommendations.length === 0 && (
-                <div className="text-center py-8 px-4 text-xs text-slate-500">
-                  {isSuggestionsDisabled ? (
-                    <div className="space-y-1">
-                      <div className="font-semibold text-slate-700">{disabledSummaryMessage}</div>
-                      <div className="text-[11px] text-slate-400">
-                        Re-enable &ldquo;Automated AI Reorder Suggestions&rdquo; in Settings → Preferences to generate restock quantities.
-                      </div>
-                    </div>
-                  ) : (
-                    'All products are above their low-stock thresholds and 14-day reorder points.'
-                  )}
-                </div>
-              )}
-            </div>
+        <details className="insights-panel insights-method"><summary>How these insights are calculated</summary>
+          <div className="insights-method-content"><p>{sandbox ? 'The demo estimates 14-day demand from average daily sales over the selected period. These estimates use browser data and do not run the server Holt model. Stock quantities reflect current inventory, not historical balances. Stockout probabilities and model validation scores are unavailable.' : data.modelEvaluation?.methodology || 'Demand is estimated from recorded product sales.'}</p>
+            {data.modelEvaluation && <><div className="insights-validation"><div><span>Model average error</span><strong>{data.modelEvaluation.maeModel ?? '—'} units/day</strong></div><div><span>Baseline average error</span><strong>{data.modelEvaluation.maeBaseline ?? '—'} units/day</strong></div><div><span>Evaluated products</span><strong>{data.modelEvaluation.evaluatedProducts ?? '—'}</strong></div></div><p>Mean absolute error measures the average size of daily prediction errors. Lower values indicate better performance. Baseline: {data.modelEvaluation.baselineMethod}. Evaluation window: {data.modelEvaluation.windowDays} days.</p><ul>{(data.modelEvaluation.assumptionsAndLimitations||[]).map((note,index)=><li key={index}>{note}</li>)}</ul></>}
           </div>
-
-          {/* Right: Top Selling Products */}
-          <div className="lg:col-span-5 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
-            <h2 className="font-bold text-sm text-slate-900 mb-3">Top Selling Products (Last 30 Days)</h2>
-            <div className="space-y-3.5">
-              {data.topProducts.map(tp => (
-                <div key={tp.productId || tp.name} className="flex items-center gap-3">
-                  <span className="w-9 h-9 bg-slate-100 rounded-xl grid place-items-center text-sm shrink-0">
-                    {tp.name.toLowerCase().includes('laptop')
-                      ? '💻'
-                      : tp.name.toLowerCase().includes('mouse')
-                      ? '🖱'
-                      : tp.name.toLowerCase().includes('keyboard')
-                      ? '⌨'
-                      : '🖥'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between text-xs">
-                      <span className="font-bold text-slate-800 truncate">{tp.name}</span>
-                      <span className="text-slate-500 font-medium">
-                        {formatUnits(tp.sold)} sold · {formatCurrency(tp.revenue || 0)}
-                      </span>
-                    </div>
-                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mt-1.5">
-                      <div
-                        className="h-full bg-blue-600 rounded-full"
-                        style={{ width: `${Math.max(tp.sharePct || 40, 15)}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {data.topProducts.length === 0 && (
-                <div className="text-center py-6 text-xs text-slate-400">No sales recorded in the last 30 days.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Demand Analysis, Slow-Moving & Model Evaluation */}
-      {(tab === 'Overview' || tab === 'Demand Analysis') && (
-        <div className="grid md:grid-cols-2 gap-5">
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm">
-            <h3 className="font-bold text-sm text-slate-900 mb-2">Slow-Moving Products (30-Day Analysis)</h3>
-            <p className="text-xs text-slate-500 mb-3">
-              Products currently in stock with zero sales velocity in the last 30 days.
-            </p>
-            <div className="space-y-2.5 text-xs">
-              {(data.slowMoving || []).map(item => (
-                <div
-                  key={item.productId || item.product}
-                  className="border border-slate-100 rounded-xl p-3 flex justify-between items-center"
-                >
-                  <div>
-                    <div className="font-bold text-slate-800">
-                      {item.product}{' '}
-                      <span className="text-slate-400 font-normal">({item.category})</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">{item.suggestion}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-slate-700">{formatUnits(item.stock)} in stock</div>
-                    <div className="text-[11px] text-slate-400">
-                      Capital: {formatCurrency(item.tiedCapital || 0)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4">
-            <div>
-              <h3 className="font-bold text-sm text-slate-900 mb-2">
-                Sales Trend &amp; Forecasting Model Evaluation
-              </h3>
-              <div className="grid grid-cols-2 gap-3 text-xs mt-3">
-                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="text-slate-500">Revenue This Month</div>
-                  <div className="text-lg font-extrabold text-slate-900 mt-1">
-                    {formatCurrency(data.revenueThisMonth || 0)}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="text-slate-500">Profit This Month</div>
-                  <div className="text-lg font-extrabold text-emerald-600 mt-1">
-                    {formatCurrency(data.profitThisMonth || 0)}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="text-slate-500">Holt Model Walk-Forward MAE</div>
-                  <div className="text-lg font-extrabold text-blue-600 mt-1">
-                    {data.modelEvaluation?.maeModel ?? '—'}
-                  </div>
-                </div>
-                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="text-slate-500">7-Day SMA Baseline MAE</div>
-                  <div className="text-lg font-extrabold text-slate-700 mt-1">
-                    {data.modelEvaluation?.maeBaseline ?? '—'}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {data.modelEvaluation && (
-              <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1.5">
-                <div>
-                  <strong>Methodology:</strong> {data.modelEvaluation.methodology} evaluated across{' '}
-                  {formatCount(data.modelEvaluation.evaluatedProducts, 'active product')} over a{' '}
-                  {data.modelEvaluation.windowDays}-day window against {data.modelEvaluation.baselineMethod}.
-                </div>
-                {Array.isArray(data.modelEvaluation.assumptionsAndLimitations) && (
-                  <ul className="list-disc pl-4 space-y-0.5 text-[10px] text-slate-500">
-                    {data.modelEvaluation.assumptionsAndLimitations.map((note, idx) => (
-                      <li key={idx}>{note}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+        </details>
+      </>}
     </div>
   );
 }

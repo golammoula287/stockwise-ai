@@ -14,7 +14,7 @@
 
 ## 4. Outbound Email & OAuth Integrations
 - **Outbound SMTP Email Summaries:** The "Monthly Email Performance Summaries" preference is explicitly labeled `SMTP Not Configured` and disabled in the UI unless `SMTP_HOST` is configured.
-- **Google OAuth:** Third-party Google OAuth is not configured in this deployment; the login button is explicitly disabled (`Continue with Google (Unavailable)`).
+- **Google sign-in:** Implemented using Google Identity Services and server verification. Requires a Web OAuth client ID and an existing invited account; see `google-login.md`. Without client configuration, the UI clearly leaves Google unavailable and preserves password access. Live Google consent remains unverified.
 
 ## 5. Product Deletion Policy
 - To preserve historical financial and relational integrity (`ON DELETE RESTRICT` on `sale_items.productId`), products that have appeared in at least one completed `Sale` cannot be hard-deleted via `DELETE /api/products/:id` (`400 Bad Request`). Administrators should set their stock to `0` instead.

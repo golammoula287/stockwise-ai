@@ -77,6 +77,24 @@ function buildLowStockAlertItems(lowStockProducts) {
   });
 }
 
+router.get('/monthly', async (req, res, next) => {
+  try {
+    const { monthlyAnalytics, monthKeys, currentBusinessMonth } = await import('../../shared/dashboardAnalytics.mjs');
+    const month = String(req.query.month || currentBusinessMonth());
+    let keys; try { keys = monthKeys(month); } catch (_) { return res.status(400).json({ message: 'Choose a valid month.' }); }
+    const [year, monthIndex] = month.split('-').map(Number);
+    const start = new Date(`${keys.previousMonth}-01T00:00:00+06:00`);
+    const end = new Date(Date.UTC(year, monthIndex, 1) - 6 * 60 * 60 * 1000);
+    const prisma = getPrisma();
+    const [products, sales, setting] = await Promise.all([
+      prisma.product.findMany(),
+      prisma.sale.findMany({ where: { createdAt: { gte: start, lt: end } }, include: { items: true } }),
+      prisma.setting.findUnique({ where: { userId: req.user.id } }),
+    ]);
+    res.json(monthlyAnalytics({ products, sales, month, currency: setting?.currency || '৳' }));
+  } catch (error) { next(error); }
+});
+
 router.get('/stats', async (req, res, next) => {
   try {
     const prisma = getPrisma();

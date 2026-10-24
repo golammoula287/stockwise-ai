@@ -56,6 +56,8 @@ router.get('/stock-history', async (req, res, next) => {
     if (req.query.type && ['initial', 'sale', 'restock', 'adjustment'].includes(String(req.query.type))) {
       where.type = String(req.query.type);
     }
+    const search = String(req.query.search || '').trim().slice(0, 100);
+    if (search) where.OR = [{ productName: { contains: search, mode: 'insensitive' } }, { product: { sku: { contains: search, mode: 'insensitive' } } }];
     const logs = await prisma.stockLog.findMany({
       where,
       include: {
@@ -64,7 +66,9 @@ router.get('/stock-history', async (req, res, next) => {
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
-    res.json(logs);
+    const products = logs.length ? await prisma.product.findMany({ where: { id: { in: [...new Set(logs.map(log => log.productId))] } }, select: { id: true, sku: true } }) : [];
+    const skuById = new Map(products.map(product => [product.id, product.sku]));
+    res.json(logs.map(log => ({ ...log, sku: skuById.get(log.productId) || null })));
   } catch (err) {
     next(err);
   }

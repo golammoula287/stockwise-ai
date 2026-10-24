@@ -38,6 +38,8 @@ function resolveDatabaseUrl(explicitUri) {
 function createPrismaClient(datasourceUrl) {
   const base = new PrismaClient({
     datasources: datasourceUrl ? { db: { url: datasourceUrl } } : undefined,
+    // Cloud PostgreSQL round trips can exceed Prisma's 5-second local default.
+    transactionOptions: { maxWait: 10000, timeout: 30000 },
     log: process.env.PRISMA_LOG === 'true' ? ['query', 'error', 'warn'] : ['error'],
   });
 

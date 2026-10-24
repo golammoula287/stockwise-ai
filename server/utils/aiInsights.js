@@ -237,28 +237,19 @@ function fitHoltDemandModel(dailySeries, horizonDays = 14) {
  */
 async function generateInsights(options = {}) {
   const prisma = getPrisma();
-  const now = new Date();
-  const startThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const endLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-
-  // Build 30 consecutive calendar-day window ending today at 23:59:59.999
-  const DAYS_WINDOW = 30;
-  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  const startWindow = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() - (DAYS_WINDOW - 1),
-    0,
-    0,
-    0,
-    0
-  );
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const { insightsPeriod } = await import('../../shared/insightsPeriod.mjs');
+  const selectedPeriod = insightsPeriod(options);
+  const DAYS_WINDOW = selectedPeriod.days;
+  const startWindow = new Date(selectedPeriod.start);
+  const endOfToday = new Date(selectedPeriod.end - 1);
+  const startThisMonth = startWindow;
+  const startLastMonth = new Date(selectedPeriod.previousStart);
+  const endLastMonth = new Date(selectedPeriod.start - 1);
+  const MS_PER_DAY = 86400000;
 
   const [products, salesThisMonth, salesLastMonth, sales30Days, setting] = await Promise.all([
     prisma.product.findMany(),
-    prisma.sale.findMany({ where: { createdAt: { gte: startThisMonth } } }),
+    prisma.sale.findMany({ where: { createdAt: { gte: startThisMonth, lte: endOfToday } } }),
     prisma.sale.findMany({ where: { createdAt: { gte: startLastMonth, lte: endLastMonth } } }),
     prisma.sale.findMany({
       where: { createdAt: { gte: startWindow, lte: endOfToday } },
@@ -295,7 +286,7 @@ async function generateInsights(options = {}) {
 
   sales30Days.forEach(sale => {
     const d = new Date(sale.createdAt);
-    const saleDayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const saleDayStart = new Date(Math.floor((d.getTime()+6*3600000)/MS_PER_DAY)*MS_PER_DAY-6*3600000);
     const dayIndex = Math.min(
       DAYS_WINDOW - 1,
       Math.max(0, Math.round((saleDayStart.getTime() - startWindow.getTime()) / MS_PER_DAY))
@@ -446,7 +437,7 @@ async function generateInsights(options = {}) {
 
       const explainability =
         f.sold30 === 0
-          ? `Below low-stock threshold (${p.stock} ≤ ${f.threshold}); 0 units sold in last 30d · 14d forecast: 0 units (${f.stockoutProbability}% 14d stockout risk)`
+          ? `Below low-stock threshold (${p.stock} ≤ ${f.threshold}); 0 units sold in selected ${DAYS_WINDOW} days · 14d forecast: 0 units (${f.stockoutProbability}% 14d stockout risk)`
           : `${f.ml.selectedModel}: 14d forecast ${formatUnits(f.forecast14dContinuous)} (${formatUnits(f.expected14dDemand, '~')}, trend ${f.ml.trendSlope >= 0 ? '+' : ''}${f.ml.trendSlope}/day), ROP ${f.reorderPoint} (7d lead time + ${f.safetyStock} safety stock), 14d stockout risk ${f.stockoutProbability}%`;
 
       return {
@@ -533,11 +524,11 @@ async function generateInsights(options = {}) {
   // Build dynamic Business Performance Summary from real data + ML forecast
   const parts = [];
   if (revenueChangePct > 0) {
-    parts.push(`Your sales increased by ${revenueChangePct}% this month.`);
+    parts.push(`Your sales increased by ${revenueChangePct}% over the selected period.`);
   } else if (revenueChangePct < 0) {
-    parts.push(`Your sales decreased by ${Math.abs(revenueChangePct)}% this month.`);
+    parts.push(`Your sales decreased by ${Math.abs(revenueChangePct)}% over the selected period.`);
   } else {
-    parts.push('Your sales volume is steady this month.');
+    parts.push('Your sales volume is steady over the selected period.');
   }
 
   if (topProducts.length >= 2) {
@@ -569,6 +560,7 @@ async function generateInsights(options = {}) {
       : 0;
 
   return {
+    period: selectedPeriod,
     summary: parts.join(' '),
     autoReorderEnabled,
     recommendationState,
@@ -598,15 +590,15 @@ async function generateInsights(options = {}) {
       horizonDays: 14,
       leadTimeDays: LEAD_TIME_DAYS,
       windowDays: DAYS_WINDOW,
-      evaluationStepsOutOfSample: DAYS_WINDOW - 7,
-      maeModel: avgMaeModel,
-      rmseModel: avgRmseModel,
-      maeBaseline: avgMaeBaseline,
+      evaluationStepsOutOfSample: Math.max(0, DAYS_WINDOW - 7),
+      maeModel: DAYS_WINDOW > 7 && evalSet.length ? avgMaeModel : null,
+      rmseModel: DAYS_WINDOW > 7 && evalSet.length ? avgRmseModel : null,
+      maeBaseline: DAYS_WINDOW > 7 && evalSet.length ? avgMaeBaseline : null,
       evaluatedProducts: evalSet.length,
       assumptionsAndLimitations: [
-        'Daily demand is bucketed across the trailing 30 calendar days with explicit zero-filling for days without sales.',
-        'Walk-forward validation evaluates 1-step-ahead out-of-sample predictions across days 8–30 (23 steps) with zero look-ahead leakage.',
-        'Products with sparse/intermittent demand (≤2 active sales days in 30d) use damped trend and empirical rate blending to prevent single-order trend overshooting.',
+        `Daily demand uses the selected ${DAYS_WINDOW} calendar days with zero-filling for days without recorded sales; current stock is used, not historical stock.`,
+        `Walk-forward validation uses available daily observations after the initial 7 days, with zero look-ahead leakage; short periods provide limited validation.`,
+        'Products with sparse/intermittent demand (≤2 active sales days in the selected period) use damped trend and empirical rate blending to prevent single-order trend overshooting.',
         'Stockout probability P(Demand_14d > CurrentStock) is calibrated via a Gaussian CDF with a Poisson variance floor; it does not model external supplier delays beyond the 7-day lead time or multi-month holiday seasonality.',
       ],
     },

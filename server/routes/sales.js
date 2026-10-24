@@ -25,7 +25,10 @@ router.get('/', async (req, res, next) => {
   try {
     const prisma = getPrisma();
     const { search, customer, limit = 50, page = 1 } = req.query;
+    const { salesPeriod } = await import('../../shared/salesPeriod.mjs');
+    const period = salesPeriod(req.query);
     const where = {};
+    if (period.start !== undefined) where.createdAt = { gte: new Date(period.start), lt: new Date(period.end) };
     if (customer && isValidId(String(customer))) {
       where.customerId = String(customer);
     }

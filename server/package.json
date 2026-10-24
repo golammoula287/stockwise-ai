@@ -9,10 +9,11 @@
     "seed": "node seed.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
-    "test": "jest --detectOpenHandles --runInBand",
-    "test:unit": "jest --runInBand tests/safety.test.js tests/grok.test.js tests/seedSafety.test.js",
+    "test": "npm run test:unit",
+    "test:unit": "jest --runInBand tests/safety.test.js tests/groq.test.js tests/seedSafety.test.js tests/googleAuth.test.js tests/signup.test.js tests/historySearch.test.js",
     "test:integration": "jest --detectOpenHandles --runInBand tests/api.test.js",
-    "test:prepare": "node scripts/prepareTestDatabase.js"
+    "test:prepare": "node scripts/prepareTestDatabase.js",
+    "demo:prepare": "node scripts/prepareDemo.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -21,6 +22,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-validator": "^7.0.1",
+    "google-auth-library": "^11.3.1",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0"
   },

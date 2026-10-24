@@ -1,13 +1,13 @@
 # Demo & Verification Checklist
 
 ## 1. Environment & PostgreSQL Setup
-- [ ] `server/.env` has separate Neon development/test URLs with SSL and a strong `JWT_SECRET`
+- [ ] `server/.env` has the Neon demo URL with SSL and an empty TEST_DATABASE_URL and a strong `JWT_SECRET`
 - [ ] On the development database only, run `cd server && npx prisma migrate deploy && npm run seed`; supply a private seed password first
-- [ ] Run `cd server && npm run test:prepare && npm test` — all automated PostgreSQL integration and concurrency tests pass
+- [ ] Run `cd server && npm test` — local mocked checks pass; CI separately runs integration/concurrency against disposable PostgreSQL
 - [ ] Run `cd client && npm run build` — production bundle compiles with zero errors
 
 ## 2. Authentication & Security
-- [ ] Navigate to `/login` — inputs start empty; Google Sign-In button is clearly marked `Unavailable` and disabled
+- [ ] Navigate to `/login` — inputs start empty; Google button uses the official SDK when configured; otherwise a clear unavailable notice is shown. Verify invited Google login after completing `google-login.md`
 - [ ] Submitting invalid credentials returns a `401` inline error banner
 - [ ] Signing in with valid admin credentials redirects to `/dashboard`
 

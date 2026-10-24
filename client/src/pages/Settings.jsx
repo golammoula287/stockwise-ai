@@ -1,8 +1,15 @@
+import { useConfirm } from '../context/ConfirmContext';
+import { isDemoSandbox } from '../lib/demoSandbox';
+import BusinessModelSettings from '../components/BusinessModelSettings';
+import AppearanceSettings from '../components/AppearanceSettings';
+import { useDemoMode } from '../context/DemoModeContext';
 import { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 
 export default function Settings() {
+  const demoReadOnly = useDemoMode();
+  const confirm = useConfirm();
   const { user, setUser } = useAuth();
   const [tab, setTab] = useState('Profile');
   const [profile, setProfile] = useState({
@@ -62,6 +69,7 @@ export default function Settings() {
     e.preventDefault();
     if (submitting) return;
     setMsg({ text: '', type: '' });
+    if(!await confirm({title:'Save settings?',message:'Apply these business and preference settings? Changes affect checkout rules and how the workspace operates.',confirmLabel:'Save settings'}))return;
     setSubmitting(true);
     try {
       const { data } = await api.put('/settings', {
@@ -94,6 +102,7 @@ export default function Settings() {
       setMsg({ text: 'New password must be different from your current password.', type: 'error' });
       return;
     }
+    if(!await confirm({title:'Change your password?',message:'Your sign-in password will change immediately. Use the new password the next time you sign in.',confirmLabel:'Change password'}))return;
     setSubmitting(true);
     try {
       const { data } = await api.put('/settings/password', {
@@ -121,8 +130,8 @@ export default function Settings() {
 
       {/* Card with Underline Tabs */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-6">
-        <div className="flex gap-6 border-b border-slate-200 text-xs font-semibold">
-          {['Profile', 'Business', 'Security', 'Preferences'].map(t => (
+        <div className="flex gap-6 overflow-x-auto border-b border-slate-200 text-xs font-semibold">
+          {['Profile', 'Business', 'Security', 'Preferences', 'Business model', 'Appearance'].map(t => (
             <button
               key={t}
               onClick={() => {
@@ -152,6 +161,9 @@ export default function Settings() {
             {msg.text}
           </div>
         )}
+
+        {tab === 'Appearance' && <AppearanceSettings />}
+        {tab === 'Business model' && <BusinessModelSettings onSaved={setPreferences} />}
 
         {/* TAB 1: PROFILE */}
         {tab === 'Profile' && (
@@ -204,7 +216,7 @@ export default function Settings() {
                 </div>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || demoReadOnly}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-2.5 font-semibold shadow-sm transition mt-2 disabled:opacity-50"
                 >
                   {submitting ? 'Saving...' : 'Update Profile'}
@@ -272,7 +284,7 @@ export default function Settings() {
             </div>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || demoReadOnly}
               className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold disabled:opacity-50"
             >
               {submitting ? 'Saving...' : 'Save Business Settings'}
@@ -283,7 +295,7 @@ export default function Settings() {
         {/* TAB 3: SECURITY */}
         {tab === 'Security' && (
           <form onSubmit={handlePasswordChange} className="max-w-md space-y-3.5 text-xs">
-            <h2 className="font-bold text-sm text-slate-900">Change Account Password</h2>
+            <h2 className="font-bold text-sm text-slate-900">Change Account Password</h2>{isDemoSandbox() && <p className="text-xs text-slate-500">Password changes are unavailable in the browser sandbox. Your real sign-in credentials stay unchanged.</p>}
             <div>
               <label className="block text-slate-500 mb-1 font-medium">Current Password</label>
               <input
@@ -318,7 +330,7 @@ export default function Settings() {
             </div>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || demoReadOnly || isDemoSandbox()}
               className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold disabled:opacity-50"
             >
               {submitting ? 'Updating...' : 'Update Password'}
@@ -381,7 +393,7 @@ export default function Settings() {
             </div>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || demoReadOnly}
               className="bg-blue-600 text-white rounded-xl px-6 py-2.5 font-semibold disabled:opacity-50"
             >
               {submitting ? 'Saving...' : 'Save Preferences'}

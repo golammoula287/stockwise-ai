@@ -1,0 +1,3 @@
+export default function SearchBox({ value, onChange, label, placeholder }) {
+  return <div className="history-search" role="search" aria-label={`${label} controls`}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5" strokeLinecap="round"/></svg><input type="search" aria-label={label} value={value} onChange={event=>onChange(event.target.value)} placeholder={placeholder} maxLength={100}/>{value&&<button type="button" aria-label={`Clear ${label.toLowerCase()}`} onClick={()=>onChange('')}>Clear</button>}</div>;
+}

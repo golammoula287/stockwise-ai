@@ -1,3 +1,4 @@
+import { isDemoSandbox } from '../lib/demoSandbox';
 import { useEffect, useRef, useState } from 'react';
 import api from '../lib/api';
 
@@ -90,7 +91,7 @@ export default function AIChatbot() {
       const { data } = await api.post('/chat', {
         message: trimmed,
         history: historyPayload,
-      });
+      }, { timeout: 250000 });
 
       setMessages(prev => [
         ...prev,
@@ -142,7 +143,7 @@ export default function AIChatbot() {
   };
 
   return (
-    <div className="fixed bottom-5 right-5 z-40">
+    <div className="workspace-assistant fixed bottom-5 right-5 z-40">
       {/* Chat Panel */}
       {isOpen && (
         <div
@@ -169,7 +170,7 @@ export default function AIChatbot() {
                 <div className="text-[10px] text-slate-300">
                   {statusInfo?.configured === false
                     ? 'Configuration required (AI_API_KEY)'
-                    : 'Live PostgreSQL & Holt Forecast Grounded'}
+                    : isDemoSandbox() ? 'Browser demo data · Groq assistant' : 'Live PostgreSQL & Holt Forecast Grounded'}
                 </div>
               </div>
             </div>
@@ -209,7 +210,7 @@ export default function AIChatbot() {
                 className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-sm ${
+                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words shadow-sm ${
                     m.role === 'user'
                       ? 'bg-blue-600 text-white rounded-br-sm'
                       : m.isError
@@ -263,7 +264,7 @@ export default function AIChatbot() {
               <div className="flex justify-start">
                 <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-3.5 py-2.5 text-xs text-slate-500 shadow-sm flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
-                  <span>Checking live StockWise AI data...</span>
+                  <span>{isDemoSandbox() ? 'Reviewing this browser demo…' : 'Checking live StockWise AI data…'}</span>
                 </div>
               </div>
             )}
@@ -320,7 +321,7 @@ export default function AIChatbot() {
         className="ml-auto flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-full shadow-lg hover:shadow-xl transition font-bold text-xs"
       >
         <span className="text-base leading-none">✦</span>
-        <span>{isOpen ? 'Close Assistant' : 'AI Assistant'}</span>
+        <span className="assistant-toggle-label">{isOpen ? 'Close Assistant' : 'AI Assistant'}</span>
       </button>
     </div>
   );

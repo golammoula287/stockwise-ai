@@ -37,7 +37,7 @@ app.get('/', (req, res) =>
   res.json({ message: 'StockWise AI API', version: '1.0.0', database: 'PostgreSQL + Prisma' })
 );
 app.get('/api/health', (req, res) =>
-  res.json({ ok: true, database: 'postgresql', uptime: process.uptime(), timestamp: new Date().toISOString() })
+  res.json({ ok: true, database: 'postgresql', demoReadOnly: process.env.DEMO_READ_ONLY === 'true', uptime: process.uptime(), timestamp: new Date().toISOString() })
 );
 
 app.get('/api/ready', async (req, res) => {
@@ -63,6 +63,7 @@ app.use('/api', async (req, res, next) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/auth/google', require('./routes/googleAuth'));
 app.use('/api/products', productRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/sales', saleRoutes);
@@ -76,6 +77,9 @@ app.use((req, res) => res.status(404).json({ message: 'Route not found' }));
 
 // Centralized Error Handler (never leaks SQL, credentials, or stack traces)
 app.use((err, req, res, next) => {
+  if (err.code === 'P2028') {
+    return res.status(503).json({ message: 'The database request timed out. Refresh the page before retrying.' });
+  }
   if (err.code === 'P2002') {
     const target = Array.isArray(err.meta?.target) ? err.meta.target.join(', ') : String(err.meta?.target || '');
     if (target.toLowerCase().includes('sku')) {
@@ -110,7 +114,7 @@ app.use((err, req, res, next) => {
 });
 
 if (require.main === module) {
-  const PORT = process.env.PORT || 5000;
+  const PORT = process.env.PORT || 5001;
   connectDB().then(() => {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`StockWise AI API (PostgreSQL + Prisma) running on http://0.0.0.0:${PORT}`);
