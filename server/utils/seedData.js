@@ -32,6 +32,7 @@ async function seedDatabase({ force = false } = {}) {
       email: adminEmail,
       password: hashedPassword,
       role: 'admin',
+      privateWorkspace: false,
       phone: '01712345678',
       businessName: 'StockWise AI',
     },

@@ -25,23 +25,44 @@ function normalizeSku(rawSku) {
 router.get('/categories', async (req, res, next) => {
   try {
     const prisma = getPrisma();
-    const products = await prisma.product.findMany();
-    const map = {};
+    const [products, saved] = await Promise.all([prisma.product.findMany(), prisma.category.findMany()]);
+    const map = new Map(saved.map(c => [c.name, { category: c.name, count: 0, totalStock: 0, totalValue: 0, lowStockCount: 0 }]));
     for (const p of products) {
       const cat = p.category || 'Uncategorized';
-      if (!map[cat]) {
-        map[cat] = { category: cat, count: 0, totalStock: 0, totalValue: 0, lowStockCount: 0 };
+      if (!map.has(cat)) {
+        map.set(cat, { category: cat, count: 0, totalStock: 0, totalValue: 0, lowStockCount: 0 });
       }
-      map[cat].count += 1;
-      map[cat].totalStock += p.stock || 0;
-      map[cat].totalValue = roundCurrency(map[cat].totalValue + (p.price || 0) * (p.stock || 0));
+      const stats = map.get(cat);
+      stats.count += 1;
+      stats.totalStock += p.stock || 0;
+      stats.totalValue = roundCurrency(stats.totalValue + (p.price || 0) * (p.stock || 0));
       if (p.stock <= (p.lowStockThreshold ?? 5)) {
-        map[cat].lowStockCount += 1;
+        stats.lowStockCount += 1;
       }
     }
-    res.json(Object.values(map));
+    res.json([...map.values()].sort((a, b) => a.category.localeCompare(b.category)));
   } catch (err) {
     next(err);
+  }
+});
+
+router.post('/categories', adminOnly, async (req, res, next) => {
+  try {
+    if (typeof req.body.name !== 'string') return res.status(400).json({ message: 'Enter a category name.' });
+    const name = req.body.name.trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 60) return res.status(400).json({ message: 'Category names must be 1–60 characters.' });
+    if (['all', 'all categories'].includes(name.toLowerCase())) return res.status(400).json({ message: 'Choose a category name other than All or All Categories.' });
+    const prisma = getPrisma();
+    const [saved, used] = await Promise.all([
+      prisma.category.findFirst({ where: { key: name.toLowerCase() } }),
+      prisma.product.findFirst({ where: { category: { equals: name, mode: 'insensitive' } } }),
+    ]);
+    if (saved || used) return res.status(409).json({ message: 'This category already exists.' });
+    const category = await prisma.category.create({ data: { name, key: name.toLowerCase() } });
+    res.status(201).json({ category: category.name, count: 0, totalStock: 0, totalValue: 0, lowStockCount: 0 });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ message: 'This category already exists.' });
+    next(error);
   }
 });
 
@@ -394,11 +415,12 @@ router.patch('/:id/stock', adminOnly, async (req, res, next) => {
     const productId = req.params.id;
 
     const result = await prisma.$transaction(async (tx) => {
+      const ownerId = require('../utils/workspaceScope').workspaceOwnerId(req.user);
       // Atomic row-level conditional update in PostgreSQL
       const rows = await tx.$queryRaw`
         UPDATE "products"
         SET "stock" = "stock" + ${delta}, "updatedAt" = NOW()
-        WHERE "id" = ${productId} AND ("stock" + ${delta}) >= 0
+        WHERE "id" = ${productId} AND "workspaceOwnerId" IS NOT DISTINCT FROM ${ownerId}::text AND ("stock" + ${delta}) >= 0
         RETURNING "id", "name", "sku", "category", "price", "cost", "stock", "lowStockThreshold", "description", "image", "createdAt", "updatedAt";
       `;
 

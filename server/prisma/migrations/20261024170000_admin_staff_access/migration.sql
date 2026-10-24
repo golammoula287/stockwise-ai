@@ -1,0 +1,5 @@
+ALTER TABLE "users" ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "users" ADD COLUMN "tokenVersion" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "users" ADD COLUMN "adminId" TEXT;
+CREATE INDEX "users_adminId_idx" ON "users"("adminId");
+ALTER TABLE "users" ADD CONSTRAINT "users_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

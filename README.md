@@ -40,9 +40,9 @@ Open the live `/login` page when published, or `/login` on your local frontend.
 
 This dedicated staff account is intended for public demo access. In the interactive demo, business changes stay in the browser and reset on refresh or logout. It has no user-management privileges.
 
-You can also select **Create an account** on the login page. Public registration is available only when the server runs with `DEMO_READ_ONLY=true`; it creates a staff login, not a persistent shop workspace.
+Select **Try demo** to explore the sample data. Select **Create an account** for a private workspace with zero products, customers and sales. New accounts administer their own business records, which are saved in PostgreSQL across refreshes and devices. They cannot manage platform users or access other accounts' records. Existing accounts retain their previous demo behavior.
 
-**Owner access:** the provisioned super admin can open **Manage users** after signing in. Its credentials are kept in the local, Git-ignored `docs/PRIVATE_ACCESS.md` file. Owner credentials are not published in this README.
+**Owner access:** the provisioned app owner can open **Manage admins** after signing in. Each new admin gets **Manage staff** for their own workspace. Owner credentials are kept in the local, Git-ignored `docs/PRIVATE_ACCESS.md` file and are not published here.
 
 Google sign-in appears when the OAuth configuration is complete. Email/password sign-in works independently.
 
@@ -118,11 +118,13 @@ Report date boundaries use Bangladesh time (`Asia/Dhaka`).
 
 | Role | Purpose |
 | --- | --- |
-| Visitor / staff | Explore the fictional browser demo and use its business workflows. |
-| Admin | Administrative business actions in database-backed mode, subject to the server's demo restrictions. |
-| Super admin | Manage real user accounts: search, create staff/admin users, edit names and roles, and delete eligible accounts. |
+| Demo visitor | Explore fictional browser data; temporary sample changes only. |
+| Staff | Share their admin's workspace, view inventory/reports, handle checkout and maintain customers. Cannot edit inventory, passwords, business settings or product-field definitions, or manage accounts. |
+| Private workspace admin | Manage their own saved business data and create, restrict, reset passwords for, or delete their own staff. Cannot manage other admins. |
+| Legacy admin | Existing business actions, subject to the server's demo restrictions. |
+| App owner | Manage admin accounts: create, search, rename, reset passwords, restrict/restore access and delete admin workspaces with their staff. |
 
-The super admin is an `admin` account matching the server-only `SUPER_ADMIN_EMAIL`. Access is checked on the server, not granted by browser state. The owner cannot be deleted or demoted from the users page. Accounts with related business records cannot be deleted.
+The app owner is a legacy `admin` account matching the server-only `SUPER_ADMIN_EMAIL`. Access is checked on the server. Owner deletion and role changes are blocked. Restricting an admin blocks their staff too and revokes existing sessions; restoring access requires fresh sign-in. Individually restricted staff remain restricted. Deleting an admin permanently removes that private workspace's products, customers, sales, stock history and staff accounts in one transaction, after confirmation. Deleting an individual staff account preserves business history. Existing unassigned legacy accounts are not automatically attached to a new admin.
 
 User administration and registration affect actual account records in Neon. Product, customer, checkout, and business-setting changes in the interactive demo are browser-only.
 
@@ -280,7 +282,7 @@ From the repository root:
 npm test
 ```
 
-This runs the client tests and mocked server tests. Latest verified result: **26 client tests + 46 server tests = 72 passing tests**.
+This runs the client tests and mocked server tests. Latest verified result: **30 client tests + 79 server tests = 109 passing tests**. Workspace persistence, category isolation and admin/staff cascade checks against disposable PostgreSQL are prepared for CI and have not been run locally; the three new database migrations have not been applied.
 
 Coverage includes business totals, stock rules, optional dues, custom fields, selected periods, rolling future-dated sample data, exports, authentication, Google login, registration, and super-admin authorization.
 

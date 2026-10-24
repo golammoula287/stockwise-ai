@@ -16,7 +16,7 @@ const loginLimiter = createRateLimiter({
 });
 
 function signToken(user) {
-  return jwt.sign({ id: user.id, role: user.role }, getJwtSecret(), {
+  return jwt.sign({ id: user.id, role: user.role, version: user.tokenVersion || 0 }, getJwtSecret(), {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   });
 }
@@ -46,6 +46,7 @@ router.post(
       if (!match) {
         return res.status(401).json({ message: 'Invalid email or password' });
       }
+      await require('../utils/accountAccess').assertAccountAccess(prisma, user);
       const token = signToken(user);
       res.json({
         token,
@@ -56,7 +57,9 @@ router.post(
           email: user.email,
           role: user.role,
           isSuperAdmin: isSuperAdmin(user),
-          phone: user.phone || '01712345678',
+          privateWorkspace: user.privateWorkspace === true,
+          adminId: user.adminId || null,
+          phone: user.phone || '',
           businessName: user.businessName || 'StockWise AI',
         },
       });
@@ -72,15 +75,16 @@ router.post('/signup', signupLimiter, [
   body('email').isEmail().isLength({ max: 254 }).withMessage('Valid email is required'),
   body('password').isString().isLength({ min: 12, max: 72 }).withMessage('Password must be 12–72 characters').custom(value => Buffer.byteLength(value, 'utf8') <= 72),
 ], async (req, res, next) => {
-  // Public registration is restricted to the read-only portfolio environment.
-  if (process.env.DEMO_READ_ONLY !== 'true') return res.status(403).json({ message: 'Public registration is available only in the read-only demo.' });
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ message: errors.array()[0].msg });
   try {
     const prisma = getPrisma();
     const email = req.body.email.toLowerCase().trim();
+    if (email === (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase() || email === (process.env.DEMO_LOGIN_EMAIL || 'visitor@stockwise.example').trim().toLowerCase()) {
+      return res.status(409).json({ message: 'This email is reserved. Use another email or sign in.' });
+    }
     const password = await bcrypt.hash(req.body.password, 12);
-    await prisma.user.create({ data: { name: req.body.name, email, password, role: 'staff' } });
+    await prisma.user.create({ data: { name: req.body.name, email, password, role: 'admin', privateWorkspace: true } });
     return res.status(201).json({ message: 'Registration complete. You can now sign in.' });
   } catch (err) {
     if (err.code === 'P2002') return res.status(409).json({ message: 'Unable to register this email. Try signing in or contact the demo owner.' });

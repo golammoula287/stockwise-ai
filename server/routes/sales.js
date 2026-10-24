@@ -148,6 +148,7 @@ router.post('/', async (req, res, next) => {
     const prisma = getPrisma();
 
     const saleResult = await prisma.$transaction(async (tx) => {
+      const ownerId = require('../utils/workspaceScope').workspaceOwnerId(req.user);
       const deductedByProductId = new Map();
 
       // 1. Atomically verify and deduct stock for each product in deterministic order
@@ -155,7 +156,7 @@ router.post('/', async (req, res, next) => {
         const rows = await tx.$queryRaw`
           UPDATE "products"
           SET "stock" = "stock" - ${qty}, "updatedAt" = NOW()
-          WHERE "id" = ${productId} AND "stock" >= ${qty}
+          WHERE "id" = ${productId} AND "workspaceOwnerId" IS NOT DISTINCT FROM ${ownerId}::text AND "stock" >= ${qty}
           RETURNING "id", "name", "category", "price", "cost", "stock";
         `;
 

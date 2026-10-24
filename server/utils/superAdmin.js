@@ -1,6 +1,6 @@
 function isSuperAdmin(user) {
   const email=(process.env.SUPER_ADMIN_EMAIL||'').trim().toLowerCase();
-  return Boolean(email && user?.role==='admin' && user.email?.toLowerCase()===email);
+  return Boolean(email && user?.privateWorkspace!==true && !user?.adminId && user?.role==='admin' && user.email?.toLowerCase()===email);
 }
 function superAdminOnly(req,res,next) {
   if(!req.user)return res.status(401).json({message:'Sign in to continue.'});

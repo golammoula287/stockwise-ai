@@ -37,10 +37,14 @@ exports.protect = async (req, res, next) => {
     if (!user) {
       return res.status(401).json({ message: 'Not authorized, user no longer exists' });
     }
+    await require('../utils/accountAccess').assertAccountAccess(prisma, user);
+    if ((decoded.version || 0) !== (user.tokenVersion || 0)) {
+      return res.status(401).json({ message: 'Your session has ended. Sign in again.' });
+    }
 
-    const { password, ...safeUser } = user;
+    const { password, tokenVersion, ...safeUser } = user;
     req.user = { ...safeUser, _id: user.id, isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user) };
-    next();
+    require('../utils/workspaceScope').workspaceContext.run(req.user, next);
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
       return res.status(401).json({ message: 'Not authorized, token has expired' });

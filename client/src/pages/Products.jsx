@@ -14,7 +14,6 @@ import {
   formatDateTimeBD,
 } from '../lib/formatters';
 
-const categoriesList = ['All Categories', 'Electronics', 'Accessories', 'Audio', 'Storage'];
 const statusesList = ['All Status', 'In Stock', 'Low Stock', 'Out of Stock'];
 
 const productIcon = (name = '') => {
@@ -50,6 +49,8 @@ export default function Products() {
   const [stockError, setStockError] = useState('');
   const stockRequest = useRef(0);
   const [categoryStats, setCategoryStats] = useState([]);
+  const [newCategory, setNewCategory] = useState('');
+  const [addingCategory, setAddingCategory] = useState(false);
 
   const [productFields, setProductFields] = useState([]);
   useEffect(() => { api.get('/settings').then(({ data }) => setProductFields(data.preferences?.productFields || [])).catch(() => {}); }, []);
@@ -57,7 +58,7 @@ export default function Products() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({
     name: '',
-    category: 'Electronics',
+    category: '',
     price: '',
     cost: '',
     stock: '',
@@ -77,6 +78,24 @@ export default function Products() {
   const [err, setErr] = useState('');
   const [modalErr, setModalErr] = useState('');
   const [feedback, setFeedback] = useState('');
+  const categoryOptions = [...new Set([...categoryStats.map(item => item.category), form.category].filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  const categoriesList = ['All Categories', ...categoryStats.map(item => item.category)];
+  const fetchCategories = async () => {
+    const { data } = await api.get('/products/categories');
+    setCategoryStats(data);
+  };
+  useEffect(() => { fetchCategories().catch(error => setErr(error.response?.data?.message || 'Could not load categories.')); }, []);
+  const addCategory = async event => {
+    event.preventDefault();
+    if (!canManage || addingCategory) return;
+    setAddingCategory(true); setErr(''); setFeedback('');
+    try {
+      const { data } = await api.post('/products/categories', { name: newCategory });
+      setCategoryStats(current => [...current, data].sort((a,b) => a.category.localeCompare(b.category)));
+      setNewCategory(''); setFeedback(`Category "${data.category}" added.`);
+    } catch (error) { setErr(error.response?.data?.message || 'Could not add category.'); }
+    finally { setAddingCategory(false); }
+  };
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -113,8 +132,7 @@ export default function Products() {
         } catch(error) { if (request === stockRequest.current) setStockError(error.response?.data?.message || 'Could not search stock history.'); }
         finally { if (request === stockRequest.current) setStockBusy(false); }
       } else if (tab === 'Categories') {
-        const { data } = await api.get('/products/categories');
-        setCategoryStats(data);
+        await fetchCategories();
       }
     } catch (_) {}
   };
@@ -157,7 +175,7 @@ export default function Products() {
       setEditing(null);
       setForm({
         name: '',
-        category: 'Electronics',
+        category: '',
         price: '',
         cost: '',
         stock: '',
@@ -258,7 +276,7 @@ export default function Products() {
             setModalErr('');
             setForm({
               name: '',
-              category: 'Electronics',
+              category: '',
               price: '',
               cost: '',
               stock: '',
@@ -374,6 +392,8 @@ export default function Products() {
 
         {/* Tab 4: Categories */}
         {tab === 'Categories' && (
+          <>
+          {canManage && <form onSubmit={addCategory} className="flex flex-wrap items-end gap-3 mb-5"><label className="text-sm font-medium flex-1 min-w-0">New category<input aria-label="New category name" required maxLength={60} value={newCategory} onChange={event=>setNewCategory(event.target.value)} disabled={addingCategory} placeholder="e.g. Clothing" className="block w-full border rounded-xl px-3 py-2 mt-2" /></label><button type="submit" disabled={addingCategory || !newCategory.trim()} className="sales-primary-button">{addingCategory ? 'Adding…' : 'Add category'}</button></form>}
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4 pt-2">
             {categoryStats.map(c => (
               <div key={c.category} className="border border-slate-200 rounded-xl p-4 hover:border-blue-300 transition">
@@ -391,7 +411,9 @@ export default function Products() {
                 )}
               </div>
             ))}
+            {!categoryStats.length && <p className="text-sm text-slate-500">No categories yet.{canManage ? ' Add your first category above.' : ''}</p>}
           </div>
+          </>
         )}
 
         {/* Tab 1 & 2: Product List */}
@@ -669,15 +691,16 @@ export default function Products() {
               <div>
                 <label className="block text-slate-600 mb-1 font-medium">Category *</label>
                 <select
+                  required
+                  aria-label="Product category"
                   value={form.category}
                   onChange={e => setForm({ ...form, category: e.target.value })}
                   className="w-full border rounded-xl px-3 py-2"
                 >
-                  <option>Electronics</option>
-                  <option>Accessories</option>
-                  <option>Audio</option>
-                  <option>Storage</option>
+                  <option value="" disabled>Choose a category</option>
+                  {categoryOptions.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
+                <p className="text-xs text-slate-500 mt-1">Add new categories from the Categories tab.</p>
               </div>
               <div>
                 <label className="block text-slate-600 mb-1 font-medium">Low-Stock Threshold</label>

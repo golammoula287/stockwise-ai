@@ -17,6 +17,7 @@ async function run() {
     name: 'Portfolio Visitor',
     password: await bcrypt.hash(password, 10),
     role: 'staff',
+    privateWorkspace: false,
     businessName: 'StockWise AI',
   };
   await prisma.user.upsert({ where: { email }, update: data, create: { ...data, email } });

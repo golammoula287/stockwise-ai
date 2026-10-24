@@ -59,15 +59,17 @@ router.post('/', limiter, async (req, res, next) => {
       if (!user || (user.googleSubject && user.googleSubject !== identity.sub)) {
         return res.status(403).json({ message: 'This Google account has not been invited. Contact the demo owner for access.' });
       }
+      await require('../utils/accountAccess').assertAccountAccess(prisma, user);
       const linked = await prisma.user.updateMany({ where: { id: user.id, googleSubject: null }, data: { googleSubject: identity.sub } });
       if (!linked.count) {
         const current = await prisma.user.findUnique({ where: { id: user.id } });
         if (current?.googleSubject !== identity.sub) return res.status(403).json({ message: 'This account is linked to another Google identity.' });
       }
     }
+    await require('../utils/accountAccess').assertAccountAccess(prisma, user);
     res.set('Cache-Control', 'no-store').json({
       token: signToken(user),
-      user: { id: user.id, _id: user.id, name: user.name, email: user.email, role: user.role, isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user), phone: user.phone || '', businessName: user.businessName || 'StockWise AI' },
+      user: { id: user.id, _id: user.id, name: user.name, email: user.email, role: user.role, privateWorkspace: user.privateWorkspace === true, adminId: user.adminId || null, isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user), phone: user.phone || '', businessName: user.businessName || 'StockWise AI' },
     });
   } catch (err) { next(err); }
 });

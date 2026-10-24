@@ -8,6 +8,7 @@ const api = axios.create({
 
 const transport = axios.create({ baseURL: api.defaults.baseURL, timeout: 10000 });
 let healthCheck;
+let healthToken;
 api.interceptors.request.use(async cfg => {
   const token = localStorage.getItem('token');
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
@@ -15,7 +16,8 @@ api.interceptors.request.use(async cfg => {
   const path = url.pathname;
   if (path === '/users' || path.startsWith('/users/') || path.startsWith('/auth/')) return cfg;
   if (!token && path !== '/health') return cfg;
-  const health = await (healthCheck ||= transport.get('/health').then(response => response.data).catch(() => { healthCheck = null; return null; }));
+  if (healthToken !== token) { healthCheck = null; healthToken = token; }
+  const health = await (healthCheck ||= transport.get('/health', { headers: token ? { Authorization: `Bearer ${token}` } : {} }).then(response => response.data).catch(error => { healthCheck = null; throw error; }));
   if (health?.demoReadOnly !== true) return cfg;
   if (path === '/health') {
     sandboxFor(token);

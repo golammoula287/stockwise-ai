@@ -51,7 +51,7 @@ export default function Layout({ children }) {
     return () => { desktop.removeEventListener('change', update); window.removeEventListener('resize', resize); };
   }, []);
   const [sandbox, setSandbox] = useState(false);
-  const [demoReadOnly, setDemoReadOnly] = useState(true);
+  const [demoReadOnly, setDemoReadOnly] = useState(user?.privateWorkspace !== true);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifState, setNotifState] = useState({
     alertsEnabled: true,
@@ -152,7 +152,7 @@ export default function Layout({ children }) {
           <Link to="/dashboard" aria-label="StockWise AI dashboard" className="workspace-brand"><Brand /></Link>
         </div>
         <nav className="px-3 py-4 space-y-1.5 flex-1" aria-label="Primary Sidebar Navigation">
-          {[...navItems,...(user?.isSuperAdmin?[{to:'/users',label:'Manage users',icon:'settings'}]:[])].map(item => (
+          {[...navItems,...((user?.isSuperAdmin || (user?.role==='admin' && user?.privateWorkspace && !user?.adminId))?[{to:'/users',label:user?.isSuperAdmin?'Manage admins':'Manage staff',icon:'settings'}]:[])].map(item => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -197,7 +197,7 @@ export default function Layout({ children }) {
               </button>
             </div>
             <nav className="px-3 py-4 space-y-1.5 flex-1" aria-label="Mobile Navigation">
-              {[...navItems,...(user?.isSuperAdmin?[{to:'/users',label:'Manage users',icon:'settings'}]:[])].map(item => (
+              {[...navItems,...((user?.isSuperAdmin || (user?.role==='admin' && user?.privateWorkspace && !user?.adminId))?[{to:'/users',label:user?.isSuperAdmin?'Manage admins':'Manage staff',icon:'settings'}]:[])].map(item => (
                 <NavLink
                   key={item.to}
                   to={item.to}

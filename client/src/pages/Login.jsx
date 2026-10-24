@@ -28,7 +28,7 @@ export default function Login() {
       setSubmitting(true);
       try {
         await api.post('/auth/signup', { name: name.trim(), email: email.trim(), password });
-        setRegistering(false); setPassword(''); setNotice('Account created. Sign in with your email and password.');
+        setRegistering(false); setPassword(''); setNotice('Account created. Sign in to your new, empty workspace.');
       } catch (err) { handleError(err); }
       finally { setSubmitting(false); }
       return;
@@ -56,7 +56,7 @@ export default function Login() {
     <header className="login-header landing-container"><Link to="/" aria-label="StockWise AI home" className="login-brand-link"><Brand /></Link><Link to="/" className="login-back">Back to home</Link></header>
     <main className="login-main">
       <section className="login-story landing-enter" aria-label="About your workspace"><div className="login-story-content"><p className="landing-eyebrow">STOCKWISE AI</p><h2>A clearer view.<br />A better working day.</h2><p className="login-story-intro">Your inventory, sales, and customer details.<br className="login-desktop-break" /> Together in one workspace.</p><div className="login-story-caption"><span>Inventory</span><span>Sales</span><span>Insights</span></div></div><p className="login-photo-note">Illustrative workspace · Fictional demo data</p></section>
-      <section className="login-form-panel landing-enter landing-enter-later" aria-labelledby="login-title"><div className="login-form-inner"><p className="landing-eyebrow">YOUR WORKSPACE</p><h1 id="login-title">{registering ? 'Create an account' : 'Welcome back'}</h1><p className="login-subtitle">{registering ? 'Create your account and try the interactive demo.' : 'Sign in to your inventory and sales workspace.'}</p>
+      <section className="login-form-panel landing-enter landing-enter-later" aria-labelledby="login-title"><div className="login-form-inner"><p className="landing-eyebrow">YOUR WORKSPACE</p><h1 id="login-title">{registering ? 'Create an account' : 'Welcome back'}</h1><p className="login-subtitle">{registering ? 'Start with an empty, private workspace. Your changes are saved.' : 'Sign in to your inventory and sales workspace.'}</p>
         {!registering && <><GoogleSignIn key={googleAttempt} onCredential={googleLogin} disabled={loading} /><div className="login-divider"><span />or use your email<span /></div></>}
         {notice && <p className="login-success" role="status">{notice}</p>}
         <form onSubmit={submit} className="login-form" aria-busy={loading || submitting}>
@@ -68,7 +68,7 @@ export default function Login() {
         </form>
         {!registering && <button type="button" className="landing-button login-demo-button" onClick={openDemo} disabled={loading || submitting || demoSigningIn}>{demoSigningIn ? 'Opening demo…' : 'Try demo'}</button>}
         <p className="login-access-note">{registering ? 'Already have an account?' : 'New to StockWise?'} <button type="button" disabled={loading || submitting} onClick={() => { setRegistering(value => !value); setError(''); setNotice(''); setPassword(''); setShowPassword(false); setCapsLock(false); }}>{registering ? 'Sign in' : 'Create an account'}</button></p>
-        <div className="login-demo-caption"><span className="landing-status-dot" /><p>Portfolio demo with fictional data.<br />Demo changes reset on refresh.</p></div>
+        <div className="login-demo-caption"><span className="landing-status-dot" /><p>{registering ? 'Your account starts empty. Inventory and sales are saved privately.' : 'Try demo explores fictional data. Create an account for your own saved workspace.'}</p></div>
       </div></section>
     </main>
     <footer className="login-footer landing-container"><span>© {new Date().getFullYear()} StockWise AI</span><span>A clearer view of your working day.</span></footer>

@@ -37,9 +37,12 @@ if (process.env.NODE_ENV !== 'test') {
 app.get('/', (req, res) =>
   res.json({ message: 'StockWise AI API', version: '1.0.0', database: 'PostgreSQL + Prisma' })
 );
-app.get('/api/health', (req, res) =>
-  res.json({ ok: true, database: 'postgresql', demoReadOnly: process.env.DEMO_READ_ONLY === 'true', uptime: process.uptime(), timestamp: new Date().toISOString() })
-);
+app.get('/api/health', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  const respond = () => res.json({ ok: true, database: 'postgresql', privateWorkspace: req.user?.privateWorkspace === true, demoReadOnly: process.env.DEMO_READ_ONLY === 'true' && req.user?.privateWorkspace !== true, uptime: process.uptime(), timestamp: new Date().toISOString() });
+  if (req.headers.authorization) return require('./middleware/auth').protect(req, res, respond);
+  return respond();
+});
 
 app.get('/api/ready', async (req, res) => {
   try {

@@ -19,6 +19,7 @@ export function createDemoStore(user = {}, { clock = () => new Date() } = {}) {
   const customers = ['Rahim Ahmed','Nusrat Khan','Tanvir Islam','Farhana Akter','Sajid Hasan','Maliha Rahman','Imran Hossain','Nabila Chowdhury'].map((name,index) => ({ id: `demo-customer-${index+1}`, _id: `demo-customer-${index+1}`, name, phone: `0170000000${index}`, email: '', address: '', createdAt: seedDate }));
   const settings = { profile: { name: user.name || 'Demo visitor', email: user.email || '', phone: '', role: user.role || 'staff' }, business: { name: 'StockWise Demo Shop', currency: '৳', taxRate: 0, lowStockThresholdDefault: 5, businessAddress: 'Dhaka, Bangladesh' }, preferences: { lowStockAlerts: true, autoReorderSuggestions: true, emailReports: false, dateFormat: 'MMM DD, YYYY', allowDues: false, productFields: [] }, capabilities: { smtpConfigured: false, sandbox: true } };
   const sales = []; const logs = []; let sequence = 1000;
+  const savedCategories = [];
   // Fictional six-month history: varied baskets, demand and payment methods.
   // Stock represents the current inventory snapshot; past purchases were replenished.
   const todayStart=insightsPeriod({days:7},clock()).end-86400000;
@@ -90,7 +91,20 @@ export function createDemoStore(user = {}, { clock = () => new Date() } = {}) {
       return copy({...settings,user:{...user,...settings.profile},message:'Demo settings updated. Refresh resets these changes.'});
     }
     if (path === '/settings/password') fail('Password changes are not simulated. Account credentials remain managed by the server.');
-    if (path === '/products/categories') return copy([...new Set(products.map(p=>p.category))].map(category=>{const list=products.filter(p=>p.category===category);return {category,count:list.length,totalStock:list.reduce((n,p)=>n+p.stock,0),totalValue:money(list.reduce((n,p)=>n+p.stock*p.price,0)),lowStockCount:list.filter(p=>p.stock<=p.lowStockThreshold).length};}));
+    if (path === '/products/categories') {
+      const names = [...new Set([...savedCategories, ...products.map(p => p.category)])];
+      if (method === 'post') {
+        if (typeof input.name !== 'string') fail('Enter a category name.');
+        const name = input.name.trim().replace(/\s+/g, ' ');
+        if (!name || name.length > 60) fail('Category names must be 1–60 characters.');
+        if (['all', 'all categories'].includes(name.toLowerCase())) fail('Choose a category name other than All or All Categories.');
+        if (names.some(value => value.toLowerCase() === name.toLowerCase())) fail('This category already exists.', 409);
+        savedCategories.push(name);
+        return { category: name, count: 0, totalStock: 0, totalValue: 0, lowStockCount: 0 };
+      }
+      if (method !== 'get') fail('Unsupported category operation.', 405);
+      return copy(names.sort((a,b)=>a.localeCompare(b)).map(category=>{const list=products.filter(p=>p.category===category);return {category,count:list.length,totalStock:list.reduce((n,p)=>n+p.stock,0),totalValue:money(list.reduce((n,p)=>n+p.stock*p.price,0)),lowStockCount:list.filter(p=>p.stock<=p.lowStockThreshold).length};}));
+    }
     if (path === '/products/stock-history') return copy(logs.map(log=>({...log,sku:products.find(p=>p.id===log.productId)?.sku||null})).filter(log=>(!query.productId||log.productId===query.productId)&&(!query.type||log.type===query.type)&&(!query.search||[log.productName,log.sku].join(' ').toLowerCase().includes(String(query.search).trim().toLowerCase()))).slice(0,200));
     if (path === '/products' && method === 'get') {
       let list=products.map(productStatus); const search=String(query.search||'').toLowerCase();

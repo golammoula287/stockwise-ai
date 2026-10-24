@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDemoStore } from '../src/lib/demoStore.js';
 const create=()=>createDemoStore({id:'test',name:'Test Visitor',role:'staff'});
+test('new demo categories appear empty, support products and filters, and reset with the demo', () => {
+ const store=create();
+ assert.equal(store.handle('post','/products/categories',{name:'  Home   Goods  '}).category,'Home Goods');
+ assert.equal(store.handle('get','/products/categories').find(c=>c.category==='Home Goods').count,0);
+ assert.throws(()=>store.handle('post','/products/categories',{name:'HOME GOODS'}),/already exists/);
+ assert.throws(()=>store.handle('post','/products/categories',{name:'All Categories'}),/Choose/);
+ assert.throws(()=>store.handle('post','/products/categories',{name:'   '}),/1–60/);
+ store.handle('post','/products',{name:'Lamp',category:'Home Goods',price:100,cost:50,stock:2});
+ assert.equal(store.handle('get','/products',{}, {category:'Home Goods'}).total,1);
+ assert.equal(store.handle('get','/products/categories').find(c=>c.category==='Home Goods').count,1);
+ assert.equal(create().handle('get','/products/categories').some(c=>c.category==='Home Goods'),false);
+});
 test('no dues by default; failed checkout is atomic and totals are recomputed',()=>{
  const store=create();const initial=store.handle('get','/products',{}, {limit:200});const p=initial.products[0];
  assert.throws(()=>store.handle('post','/sales',{items:[{product:p.id,quantity:1}],amountPaid:1}),/full payment/);

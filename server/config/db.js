@@ -44,6 +44,7 @@ function createPrismaClient(datasourceUrl) {
   });
 
   return base.$extends({
+    query: { $allModels: { $allOperations: require('../utils/workspaceScope').workspaceQuery } },
     result: {
       user: {
         _id: {

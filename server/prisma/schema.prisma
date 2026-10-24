@@ -38,17 +38,41 @@ model User {
   businessName String?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+  privateWorkspace Boolean @default(true)
+  isActive Boolean @default(true)
+  tokenVersion Int @default(0)
+  adminId String?
+  admin User? @relation("AdminStaff", fields: [adminId], references: [id], onDelete: Cascade)
+  staff User[] @relation("AdminStaff")
+  ownedProducts Product[] @relation("WorkspaceProducts")
+  ownedCategories Category[]
+  ownedCustomers Customer[] @relation("WorkspaceCustomers")
+  ownedSales Sale[] @relation("WorkspaceSales")
+  ownedStockLogs StockLog[] @relation("WorkspaceStockLogs")
   sales        Sale[]
   stockLogs    StockLog[]
   setting      Setting?
 
   @@map("users")
+  @@index([adminId])
+}
+
+model Category {
+  id String @id @default(uuid())
+  name String
+  key String
+  workspaceOwnerId String?
+  workspaceOwner User? @relation(fields: [workspaceOwnerId], references: [id], onDelete: Restrict)
+  @@unique([workspaceOwnerId, key])
+  @@map("categories")
 }
 
 model Product {
+  workspaceOwnerId String?
+  workspaceOwner User? @relation("WorkspaceProducts", fields: [workspaceOwnerId], references: [id], onDelete: Restrict)
   id                String     @id @default(uuid())
   name              String
-  sku               String?    @unique
+  sku               String?
   category          String
   price             Float
   cost              Float      @default(0)
@@ -62,11 +86,15 @@ model Product {
   stockLogs         StockLog[]
 
   @@index([category, stock])
+  @@unique([workspaceOwnerId, sku])
+  @@index([workspaceOwnerId])
   @@index([name])
   @@map("products")
 }
 
 model Customer {
+  workspaceOwnerId String?
+  workspaceOwner User? @relation("WorkspaceCustomers", fields: [workspaceOwnerId], references: [id], onDelete: Restrict)
   id          String   @id @default(uuid())
   name        String
   email       String?
@@ -79,11 +107,14 @@ model Customer {
   sales       Sale[]
 
   @@index([phone])
+  @@index([workspaceOwnerId])
   @@index([name])
   @@map("customers")
 }
 
 model Sale {
+  workspaceOwnerId String?
+  workspaceOwner User? @relation("WorkspaceSales", fields: [workspaceOwnerId], references: [id], onDelete: Restrict)
   id            String        @id @default(uuid())
   invoiceNumber String        @unique
   customerId    String?
@@ -106,6 +137,7 @@ model Sale {
   updatedAt     DateTime      @updatedAt
 
   @@index([createdAt(sort: Desc)])
+  @@index([workspaceOwnerId, createdAt])
   @@index([customerId])
   @@map("sales")
 }
@@ -130,6 +162,8 @@ model SaleItem {
 }
 
 model StockLog {
+  workspaceOwnerId String?
+  workspaceOwner User? @relation("WorkspaceStockLogs", fields: [workspaceOwnerId], references: [id], onDelete: Restrict)
   id            String       @id @default(uuid())
   productId     String
   product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -148,6 +182,7 @@ model StockLog {
   @@index([createdAt(sort: Desc)])
   @@index([productId])
   @@map("stock_logs")
+  @@index([workspaceOwnerId])
 }
 
 model Setting {

@@ -141,16 +141,14 @@ describe('StockWise AI — Comprehensive Security, PostgreSQL, Tax Persistence &
     });
 
     it('enforces role-based authorization (403 Forbidden) when staff user attempts admin-only actions', async () => {
-      const regRes = await request(app)
-        .post('/api/auth/register')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
+      // Fixture setup only: the legacy public admin-registration route was removed.
+      await getPrisma().user.create({ data: {
           name: 'Staff Cashier',
           email: 'staff@stockwise.com',
-          password: 'staffpassword123',
+          password: await require('bcryptjs').hash('staffpassword123', 4),
           role: 'staff',
-        });
-      expect(regRes.status).toBe(201);
+          privateWorkspace: false,
+      } });
 
       const loginStaff = await request(app)
         .post('/api/auth/login')

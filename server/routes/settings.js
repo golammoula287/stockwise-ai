@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const { getPrisma } = require('../config/db');
-const { protect } = require('../middleware/auth');
+const { protect, adminOnly } = require('../middleware/auth');
 const { signToken } = require('./auth');
 
 const router = express.Router();
@@ -21,13 +21,13 @@ const DEFAULT_PREFERENCES = {
 async function getOrCreateSetting(prisma, userId) {
   let setting = await prisma.setting.findUnique({ where: { userId } });
   if (!setting) {
-    setting = await prisma.setting.findFirst();
-  }
-  if (!setting) {
     setting = await prisma.setting.create({
       data: {
         userId,
         businessName: 'StockWise AI',
+        businessEmail: '',
+        businessPhone: '',
+        businessAddress: '',
         preferences: DEFAULT_PREFERENCES,
       },
     });
@@ -47,7 +47,7 @@ router.get('/', async (req, res, next) => {
       profile: {
         name: user.name,
         email: user.email,
-        phone: user.phone || '01712345678',
+        phone: user.phone || '',
         role: user.role,
         avatar: user.avatar || null,
       },
@@ -57,8 +57,8 @@ router.get('/', async (req, res, next) => {
         taxRate: setting.taxRate ?? 0,
         lowStockThresholdDefault: setting.lowStockThresholdDefault ?? 5,
         businessEmail: setting.businessEmail || user.email,
-        businessPhone: setting.businessPhone || user.phone || '01712345678',
-        businessAddress: setting.businessAddress || 'Dhaka, Bangladesh',
+        businessPhone: setting.businessPhone || user.phone || '',
+        businessAddress: setting.businessAddress || '',
       },
       preferences: {
         ...DEFAULT_PREFERENCES,
@@ -75,6 +75,7 @@ router.get('/', async (req, res, next) => {
 
 router.put(
   '/',
+  adminOnly,
   [
     body('name').optional().notEmpty().trim().withMessage('Name cannot be empty').isLength({ max: 120 }),
     body('email').optional({ checkFalsy: true }).isEmail().withMessage('Valid email address is required'),
@@ -178,6 +179,8 @@ router.put(
           email: user.email,
           phone: user.phone,
           role: user.role,
+          privateWorkspace: user.privateWorkspace === true,
+          isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user),
           businessName: setting.businessName,
         },
         business: {
@@ -199,6 +202,7 @@ router.put(
 
 router.put(
   '/password',
+  adminOnly,
   [
     body('currentPassword').notEmpty().withMessage('Current password is required'),
     body('newPassword')
@@ -225,7 +229,7 @@ router.put(
       const hashedPassword = await bcrypt.hash(String(newPassword), rounds);
       const updatedUser = await prisma.user.update({
         where: { id: req.user.id },
-        data: { password: hashedPassword },
+        data: { password: hashedPassword, tokenVersion: { increment: 1 } },
       });
       const token = signToken(updatedUser);
       res.json({

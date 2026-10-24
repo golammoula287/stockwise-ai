@@ -13,16 +13,16 @@ export default function Settings() {
   const { user, setUser } = useAuth();
   const [tab, setTab] = useState('Profile');
   const [profile, setProfile] = useState({
-    name: 'John Doe',
-    email: 'admin@stockwise.com',
-    phone: '01712345678',
+    name: user?.name || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
   });
   const [business, setBusiness] = useState({
     businessName: 'StockWise AI',
     currency: '৳',
     taxRate: 0,
     lowStockThresholdDefault: 5,
-    businessAddress: 'Dhaka, Bangladesh',
+    businessAddress: '',
   });
   const [preferences, setPreferences] = useState({
     lowStockAlerts: true,
@@ -41,9 +41,9 @@ export default function Settings() {
       .then(res => {
         if (res.data.profile) {
           setProfile({
-            name: res.data.profile.name || 'John Doe',
-            email: res.data.profile.email || 'admin@stockwise.com',
-            phone: res.data.profile.phone || '01712345678',
+            name: res.data.profile.name || '',
+            email: res.data.profile.email || '',
+            phone: res.data.profile.phone || '',
           });
         }
         if (res.data.business) {
@@ -52,7 +52,7 @@ export default function Settings() {
             currency: res.data.business.currency || '৳',
             taxRate: res.data.business.taxRate ?? 0,
             lowStockThresholdDefault: res.data.business.lowStockThresholdDefault ?? 5,
-            businessAddress: res.data.business.businessAddress || 'Dhaka, Bangladesh',
+            businessAddress: res.data.business.businessAddress || '',
           });
         }
         if (res.data.preferences) {
@@ -131,7 +131,7 @@ export default function Settings() {
       {/* Card with Underline Tabs */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-6">
         <div className="flex gap-6 overflow-x-auto border-b border-slate-200 text-xs font-semibold">
-          {['Profile', 'Business', 'Security', 'Preferences', 'Business model', 'Appearance'].map(t => (
+          {(user?.role === 'staff' ? ['Profile', 'Business', 'Appearance'] : ['Profile', 'Business', 'Security', 'Preferences', 'Business model', 'Appearance']).map(t => (
             <button
               key={t}
               onClick={() => {
@@ -163,6 +163,8 @@ export default function Settings() {
         )}
 
         {tab === 'Appearance' && <AppearanceSettings />}
+        {user?.role === 'staff' && tab !== 'Appearance' && <p className="text-sm text-slate-500">Your administrator manages passwords, inventory fields and business settings. These details are read-only.</p>}
+        <fieldset disabled={user?.role === 'staff'} className="contents">
         {tab === 'Business model' && <BusinessModelSettings onSaved={setPreferences} />}
 
         {/* TAB 1: PROFILE */}
@@ -400,6 +402,7 @@ export default function Settings() {
             </button>
           </form>
         )}
+        </fieldset>
       </div>
     </div>
   );

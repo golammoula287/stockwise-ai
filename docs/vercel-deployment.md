@@ -14,6 +14,12 @@ The checked-in configuration sets:
 
 The build generates Prisma Client and compiles the frontend. It does not migrate, seed, or change database records.
 
+Before releasing the private-workspace code, apply committed migrations with `npm run prisma:migrate --prefix server` against the intended database after the disposable PostgreSQL CI checks pass. Migration `20261024160000_private_workspaces` preserves existing accounts and rows in the legacy workspace; newly created accounts start with an empty, permanent workspace. It adds ownership columns and scopes SKUs per workspace, retaining a partial unique index for legacy SKUs. Do not reseed. Deploy the matching backend and frontend together; older backend versions do not enforce workspace ownership.
+
+Migration `20261024170000_admin_staff_access` adds staff-to-admin ownership, active/restricted status and session versions. Its staff foreign key cascades account deletion. Both migrations are required for the current code. Neither has been applied by this implementation task.
+
+Migration `20261024180000_workspace_categories` adds saved workspace categories. All three migrations are required for the current code and remain unapplied. Admins use Inventory → Categories → Add category; new categories are available in product forms/filters before any product uses them. Staff can read categories but cannot create them. Existing product category names remain visible. Browser demo categories reset with the demo. Apply migrations only through the controlled release sequence above; do not seed or run destructive integration tests on Neon.
+
 ## Private environment variables
 
 Configure these in Vercel before deployment:
@@ -38,13 +44,17 @@ The super-admin account has already been provisioned in the configured Neon data
 
 ## Roles and user management
 
-Super admin is an existing `admin` account whose email matches the server-only `SUPER_ADMIN_EMAIL`. No schema migration is required. It is checked on every user-management request; browser state cannot grant permissions. Ordinary admins cannot manage accounts. `/users` lists/searches accounts, adds staff/admin accounts, edits names/roles, and deletes accounts without related business records. Owner deletion/demotion is blocked. User administration is real database activity; fictional product/sales changes remain in browser memory.
+The app owner is an existing legacy `admin` account whose email matches the server-only `SUPER_ADMIN_EMAIL`. `/users` shows admins to the app owner and only their own staff to each private workspace admin. Owners create admins; admins create staff. Roles and workspace ownership are fixed by the server. Owner deletion is blocked. Password reset and access restriction invalidate old sessions. Staff cannot edit passwords, inventory or business settings; they can view shared workspace data, checkout and maintain customers. Business settings are shared with their admin rather than copied into separate staff workspaces.
+
+Restricting an admin blocks their staff on every authenticated request, including existing sessions and Google sign-in. Restoring access does not restore old sessions or individually restricted staff. Confirmed admin deletion atomically deletes only that admin's private business records, then deletes the admin; the database cascades staff accounts and their settings. Individual staff deletion preserves invoice/stock history. No existing unassigned staff are automatically moved into a private workspace.
+
+New public signups are private workspace admins, not platform owners. Inventory, customers, invoices, stock history, reports, assistant tools and settings are scoped to the database-authenticated account, including inside checkout transactions. `DEMO_READ_ONLY=true` continues to protect the legacy demo while private accounts can save their own records. Private accounts receive no demo badge or seeded history. Google sign-in links to an existing registered account and preserves that account's workspace. Demo-only dues/custom product fields retain their existing limitations. Previously registered accounts are not automatically converted; this change applies to new accounts.
 
 ## After publishing
 
 1. Confirm `/api/health` and `/api/ready` respond successfully.
-2. Open `/login` directly, sign in as the owner, and check **Manage users**.
-3. Verify an ordinary demo account cannot access `/api/users`.
+2. Open `/login` directly, sign in as the owner, and check **Manage admins**.
+3. Verify a private admin sees only their own **Manage staff**, and staff/demo accounts cannot access `/api/users` or mutate passwords/inventory/business settings. Use disposable CI data to verify restriction, restoration, session invalidation and admin deletion; never test destructive deletion on the shared Neon demo database.
 4. Check a deep link such as `/ai-insights` and homepage image loading.
 5. Verify Groq and Google sign-in if configured.
 
