@@ -39,7 +39,7 @@ app.get('/', (req, res) =>
 );
 app.get('/api/health', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
-  const respond = () => res.json({ ok: true, database: 'postgresql', privateWorkspace: req.user?.privateWorkspace === true, demoReadOnly: process.env.DEMO_READ_ONLY === 'true' && req.user?.privateWorkspace !== true, uptime: process.uptime(), timestamp: new Date().toISOString() });
+  const respond = () => res.json({ ok: true, database: 'postgresql', appOwner: req.user?.isSuperAdmin === true, privateWorkspace: req.user?.privateWorkspace === true, demoReadOnly: process.env.DEMO_READ_ONLY === 'true' && req.user?.privateWorkspace !== true && req.user?.isSuperAdmin !== true, uptime: process.uptime(), timestamp: new Date().toISOString() });
   if (req.headers.authorization) return require('./middleware/auth').protect(req, res, respond);
   return respond();
 });

@@ -42,7 +42,7 @@ This dedicated staff account is intended for public demo access. In the interact
 
 Select **Try demo** to explore the sample data. Select **Create an account** for a private workspace with zero products, customers and sales. New accounts administer their own business records, which are saved in PostgreSQL across refreshes and devices. They cannot manage platform users or access other accounts' records. Existing accounts retain their previous demo behavior.
 
-**Owner access:** the provisioned app owner can open **Manage admins** after signing in. Each new admin gets **Manage staff** for their own workspace. Owner credentials are kept in the local, Git-ignored `docs/PRIVATE_ACCESS.md` file and are not published here.
+**Owner access:** the single configured App Owner signs in to the dedicated `/management` dashboard with account totals and **Manage admins** controls. It has no shop navigation, inventory/sales dashboard, demo badge or assistant. Business admins keep their shop dashboards and **Manage staff**. Legacy accounts named “Workspace Owner” are not additional App Owners and are excluded from this business-admin list. Owner credentials remain in the local, Git-ignored `docs/PRIVATE_ACCESS.md` file.
 
 Google sign-in appears when the OAuth configuration is complete. Email/password sign-in works independently.
 
@@ -282,7 +282,7 @@ From the repository root:
 npm test
 ```
 
-This runs the client tests and mocked server tests. Latest verified result: **30 client tests + 79 server tests = 109 passing tests**. Workspace persistence, category isolation and admin/staff cascade checks against disposable PostgreSQL are prepared for CI and have not been run locally; the three database migrations are now applied to the configured Neon database; hosted login verification is pending.
+This runs the client tests and mocked server tests. Latest verified result: **32 client tests + 82 server tests = 114 passing tests**. Workspace persistence, category isolation and admin/staff cascade checks against disposable PostgreSQL are prepared for CI and have not been run locally. All three migrations are applied to the configured Neon database. Read-only local API checks against Neon verify owner login, management overview/list and rejected shop access; hosted deployment and browser checks for the management dashboard remain pending.
 
 Coverage includes business totals, stock rules, optional dues, custom fields, selected periods, rolling future-dated sample data, exports, authentication, Google login, registration, and super-admin authorization.
 

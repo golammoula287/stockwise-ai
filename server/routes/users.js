@@ -9,7 +9,7 @@ const { createRateLimiter } = require('../middleware/rateLimit');
 const router = express.Router();
 const select = { id: true, name: true, email: true, role: true, createdAt: true, privateWorkspace: true, adminId: true, isActive: true, _count: { select: { staff: true } } };
 const canManage = user => isSuperAdmin(user) || (user?.role === 'admin' && user.privateWorkspace === true && !user.adminId);
-const scope = user => isSuperAdmin(user) ? { role: 'admin', adminId: null } : { role: 'staff', adminId: user.id };
+const scope = user => isSuperAdmin(user) ? { role: 'admin', adminId: null, privateWorkspace: true } : { role: 'staff', adminId: user.id };
 const passwordRule = field => body(field).isString().isLength({ min: 12, max: 72 }).custom(value => Buffer.byteLength(value, 'utf8') <= 72);
 const managerScope = req => req.accountManagerScope;
 
@@ -19,6 +19,20 @@ router.use(protect, (req, res, next) => {
   req.accountManagerScope = scope(req.user);
   next();
 }, createRateLimiter({ prefix: 'user-management', windowMs: 60000, max: 60 }));
+
+router.get('/overview', async (req, res, next) => {
+  if (!isSuperAdmin(req.user)) return res.status(403).json({ message: 'App owner access required.' });
+  try {
+    const admins = scope(req.user);
+    const [totalAdmins, activeAdmins, restrictedAdmins, totalStaff] = await Promise.all([
+      getPrisma().user.count({ where: admins }),
+      getPrisma().user.count({ where: { ...admins, isActive: true } }),
+      getPrisma().user.count({ where: { ...admins, isActive: false } }),
+      getPrisma().user.count({ where: { role: 'staff', admin: admins } }),
+    ]);
+    res.set('Cache-Control', 'no-store').json({ totalAdmins, activeAdmins, restrictedAdmins, totalStaff });
+  } catch (error) { next(error); }
+});
 
 router.get('/', async (req, res, next) => {
   try {
@@ -56,7 +70,7 @@ router.use('/:id', async (req, res, next) => {
     const target = await getPrisma().user.findUnique({ where: { id: req.params.id }, select });
     if (!target) return res.status(404).json({ message: 'User not found.' });
     if (target.id === req.user.id || isSuperAdmin(target)) return res.status(403).json({ message: 'The app owner account cannot be changed or deleted here.' });
-    const allowed = isSuperAdmin(req.user) ? target.role === 'admin' && !target.adminId : target.role === 'staff' && target.adminId === req.user.id;
+    const allowed = isSuperAdmin(req.user) ? target.role === 'admin' && !target.adminId && target.privateWorkspace === true : target.role === 'staff' && target.adminId === req.user.id;
     if (!allowed) return res.status(404).json({ message: 'User not found.' });
     req.managedUser = target;
     next();

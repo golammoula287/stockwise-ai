@@ -44,6 +44,9 @@ exports.protect = async (req, res, next) => {
 
     const { password, tokenVersion, ...safeUser } = user;
     req.user = { ...safeUser, _id: user.id, isSuperAdmin: require('../utils/superAdmin').isSuperAdmin(user) };
+    if (req.user.isSuperAdmin && /^\/api\/(products|customers|sales|dashboard|ai|chat|settings)(\/|$)/.test(req.originalUrl) && !/^\/api\/settings\/password\/?(?:\?|$)/.test(req.originalUrl)) {
+      return res.status(403).json({ message: 'The App Owner account manages accounts. Use a business admin account for shop data.' });
+    }
     require('../utils/workspaceScope').workspaceContext.run(req.user, next);
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

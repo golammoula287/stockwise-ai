@@ -4,6 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import GoogleSignIn from '../components/GoogleSignIn';
 import api from '../lib/api';
+import { accountHome } from '../lib/accountHome.mjs';
 
 export default function Login() {
   const [registering, setRegistering] = useState(false);
@@ -33,13 +34,13 @@ export default function Login() {
       finally { setSubmitting(false); }
       return;
     }
-    try { await login(email.trim(), password); navigate('/dashboard'); }
+    try { const session = await login(email.trim(), password); navigate(accountHome(session.user), { replace: true }); }
     catch (err) { handleError(err); }
   };
   const googleLogin = async (credential, challenge) => {
     if (loading) return;
     setError('');
-    try { await loginWithGoogle(credential, challenge); navigate('/dashboard'); }
+    try { const session = await loginWithGoogle(credential, challenge); navigate(accountHome(session.user), { replace: true }); }
     catch (err) { handleError(err); setGoogleAttempt(value => value + 1); }
   };
   const openDemo = async () => {

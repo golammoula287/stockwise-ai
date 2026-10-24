@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import { useAuth } from './context/AuthContext.jsx';
+import { accountHome } from './lib/accountHome.mjs';
 
 const Home = lazy(() => import('./pages/Home.jsx'));
 const Login = lazy(() => import('./pages/Login.jsx'));
@@ -13,6 +14,7 @@ const Sales = lazy(() => import('./pages/Sales.jsx'));
 const AIInsights = lazy(() => import('./pages/AIInsights.jsx'));
 const Users = lazy(() => import('./pages/Users.jsx'));
 const Settings = lazy(() => import('./pages/Settings.jsx'));
+const OwnerManagement = lazy(() => import('./pages/OwnerManagement.jsx'));
 
 function PageLoader() {
   return (
@@ -29,6 +31,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/management" element={<ProtectedRoute ownerOnly><OwnerManagement /></ProtectedRoute>} />
         <Route
           path="/dashboard"
           element={
@@ -81,7 +84,7 @@ export default function App() {
           }
         />
         <Route path="/users" element={<ProtectedRoute><Layout><Users /></Layout></ProtectedRoute>} />
-        <Route path="*" element={<Navigate to={user ? '/dashboard' : '/'} replace />} />
+        <Route path="*" element={<Navigate to={user ? accountHome(user) : '/'} replace />} />
       </Routes>
     </Suspense></ConfirmProvider>
   );

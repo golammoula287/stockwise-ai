@@ -31,11 +31,26 @@ test('anonymous, staff and legacy non-owner admins cannot manage accounts', asyn
 });
 test('owner lists admins; workspace admin lists only their own staff, with safe fields and pagination', async () => {
   expect((await request(app).get('/users?search=target&page=2')).status).toBe(200);
-  expect(mockPrisma.user.findMany.mock.calls[0][0]).toMatchObject({ where: { role: 'admin', adminId: null }, skip: 50, take: 50 });
+  expect(mockPrisma.user.findMany.mock.calls[0][0]).toMatchObject({ where: { role: 'admin', adminId: null, privateWorkspace: true }, skip: 50, take: 50 });
   expect(mockPrisma.user.findMany.mock.calls[0][0].select.password).toBeUndefined();
   mockUser = admin;
   expect((await request(app).get('/users')).status).toBe(200);
   expect(mockPrisma.user.findMany.mock.calls[1][0].where).toEqual({ role: 'staff', adminId: admin.id });
+});
+test('management overview counts business admins and their staff, excludes legacy owner identities, and denies shop admins', async () => {
+  mockPrisma.user.count.mockResolvedValueOnce(4).mockResolvedValueOnce(3).mockResolvedValueOnce(1).mockResolvedValueOnce(7);
+  const result = await request(app).get('/users/overview');
+  expect(result.status).toBe(200);
+  expect(result.body).toEqual({ totalAdmins: 4, activeAdmins: 3, restrictedAdmins: 1, totalStaff: 7 });
+  const businessAdmins = { role: 'admin', adminId: null, privateWorkspace: true };
+  expect(mockPrisma.user.count.mock.calls[0][0].where).toEqual(businessAdmins);
+  expect(mockPrisma.user.count.mock.calls[3][0].where).toEqual({ role: 'staff', admin: businessAdmins });
+  mockUser = admin;
+  expect((await request(app).get('/users/overview')).status).toBe(403);
+});
+test('legacy workspace-owner names are not managed as platform or business-owner accounts', async () => {
+  mockPrisma.user.findUnique.mockResolvedValue({ ...targetAdmin, name: 'Workspace Owner', privateWorkspace: false });
+  expect((await request(app).patch('/users/target-id').send({ name: 'Changed' })).status).toBe(404);
 });
 test('owner creates only admins; admin creates only staff bound to their workspace', async () => {
   const body = { name: 'New user', email: 'NEW@example.com', password: 'SomePrivatePassword123' };

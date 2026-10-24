@@ -5,7 +5,7 @@ import useOverlay from '../lib/useOverlay';
 import SearchBox from '../components/SearchBox';
 import api from '../lib/api';
 
-export default function Users() {
+export default function Users({ onChanged }) {
   const { user } = useAuth(), confirm = useConfirm();
   const owner = user?.isSuperAdmin === true;
   const allowed = owner || (user?.role === 'admin' && user?.privateWorkspace === true && !user?.adminId);
@@ -25,7 +25,7 @@ export default function Users() {
   useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [load]);
   const mutate = async (action, message) => {
     setBusy(true); setError(''); setNotice('');
-    try { await action(); setNotice(message); setForm(null); await load(); return true; }
+    try { await action(); setNotice(message); setForm(null); await load(); await onChanged?.(); return true; }
     catch (e) { setError(e.response?.data?.message || 'Could not update this account.'); return false; }
     finally { setBusy(false); }
   };

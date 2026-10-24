@@ -5,6 +5,7 @@ const alice = { id: '11111111-1111-4111-8111-111111111111', name: 'Alice', email
 const bob = { ...alice, id: '22222222-2222-4222-8222-222222222222', email: 'bob@example.com' };
 const legacy = { ...alice, id: '33333333-3333-4333-8333-333333333333', privateWorkspace: false };
 const staff = { ...alice, id: '44444444-4444-4444-8444-444444444444', email: 'staff@example.com', role: 'staff', adminId: alice.id };
+const owner = { ...legacy, id: '55555555-5555-4555-8555-555555555555', email: 'platform-owner@example.com' };
 
 jest.mock('../config/db', () => {
   const prisma = { user: { findUnique: jest.fn() }, product: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() }, saleItem: { count: jest.fn() }, $queryRaw: jest.fn() };
@@ -23,7 +24,7 @@ beforeEach(() => {
   process.env.DEMO_READ_ONLY = 'true';
   jest.clearAllMocks();
   alice.isActive = true; staff.isActive = true; alice.tokenVersion = 0; staff.tokenVersion = 0;
-  prisma.user.findUnique.mockImplementation(async ({ where }) => [alice, bob, legacy, staff].find(user => user.id === where.id));
+  prisma.user.findUnique.mockImplementation(async ({ where }) => [alice, bob, legacy, staff, owner].find(user => user.id === where.id));
 });
 afterEach(() => { process.env = { ...original }; });
 
@@ -35,6 +36,17 @@ test('authenticated health distinguishes permanent workspaces from the demo usin
     expect(res.body.demoReadOnly).toBe(!user.privateWorkspace);
     expect(res.headers['cache-control']).toBe('no-store');
   }
+});
+test('app owner has no shop-data API access and is never treated as a browser demo', async () => {
+  process.env.SUPER_ADMIN_EMAIL = owner.email;
+  for (const path of ['/products', '/customers', '/sales', '/dashboard/stats', '/ai/insights', '/chat/status', '/settings']) {
+    const result = await request(app).get(`/api${path}`).set('Authorization', auth(owner));
+    expect(result.status).toBe(403);
+    expect(result.body.message).toContain('App Owner');
+  }
+  expect(prisma.product.findMany).not.toHaveBeenCalled();
+  const health = await request(app).get('/api/health').set('Authorization', auth(owner));
+  expect(health.body).toMatchObject({ appOwner: true, demoReadOnly: false });
 });
 
 test('concurrent authenticated requests keep independent workspace contexts across asynchronous work', async () => {
