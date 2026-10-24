@@ -282,7 +282,7 @@ From the repository root:
 npm test
 ```
 
-This runs the client tests and mocked server tests. Latest verified result: **30 client tests + 79 server tests = 109 passing tests**. Workspace persistence, category isolation and admin/staff cascade checks against disposable PostgreSQL are prepared for CI and have not been run locally; the three new database migrations have not been applied.
+This runs the client tests and mocked server tests. Latest verified result: **30 client tests + 79 server tests = 109 passing tests**. Workspace persistence, category isolation and admin/staff cascade checks against disposable PostgreSQL are prepared for CI and have not been run locally; the three database migrations are now applied to the configured Neon database; hosted login verification is pending.
 
 Coverage includes business totals, stock rules, optional dues, custom fields, selected periods, rolling future-dated sample data, exports, authentication, Google login, registration, and super-admin authorization.
 
