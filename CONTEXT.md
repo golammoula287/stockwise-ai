@@ -56,6 +56,7 @@ Exit gate: safe non-admin public experience, working critical flows, no exposed 
 Exit gate: critical checks signed off, links pass in a fresh browser, reproducible build/test evidence, honest claims, and a workflow understandable in under two minutes.
 
 ## Current handoff — 24 October 2026
+- Login now includes a styled Try demo button that signs in with the existing README-published public staff account and opens the dashboard, with busy/error feedback. Client production build passes; browser interaction and hosted login verification pending.
 - User intent: professional / Upwork portfolio; fixed feature scope. Repository is workspace root, remote `golammoula287/stockwise-ai`, user baseline `705a89e`; current changes uncommitted/unpushed.
 - User decision overrides original roadmap: ONE Neon demo DB with fictional data, NO local test connection. TEST_DATABASE_URL is empty. Never run the destructive integration suite on Neon. Default `npm test` runs mock-based tests; CI separately runs integration with disposable PostgreSQL.
 - Live completed: connected to empty Neon DB; applied both migrations; non-force seeded fictional data; created dedicated staff demo login; verified API login/products/sales/dashboard/insights/readiness; browser checkout created INV-1010 and stock movement.

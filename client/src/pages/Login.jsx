@@ -16,6 +16,7 @@ export default function Login() {
   const [capsLock,setCapsLock]=useState(false);
   const [error, setError] = useState('');
   const [googleAttempt, setGoogleAttempt] = useState(0);
+  const [demoSigningIn, setDemoSigningIn] = useState(false);
   const { login, loginWithGoogle, loading } = useAuth();
   const navigate = useNavigate();
   const handleError = err => setError(err.response?.data?.message || 'Sign-in could not be completed. Please try again.');
@@ -41,6 +42,16 @@ export default function Login() {
     try { await loginWithGoogle(credential, challenge); navigate('/dashboard'); }
     catch (err) { handleError(err); setGoogleAttempt(value => value + 1); }
   };
+  const openDemo = async () => {
+    if (loading || submitting || demoSigningIn) return;
+    setError(''); setNotice(''); setDemoSigningIn(true);
+    try {
+      // Dedicated public staff credentials, also published in README.md.
+      await login('visitor@stockwise.example', 'HNcwra_z0cyC5T9fNQNDB4t-2gkoTxBV');
+      navigate('/dashboard');
+    } catch (err) { handleError(err); }
+    finally { setDemoSigningIn(false); }
+  };
   return <div className="landing login-page">
     <header className="login-header landing-container"><Link to="/" aria-label="StockWise AI home" className="login-brand-link"><Brand /></Link><Link to="/" className="login-back">Back to home</Link></header>
     <main className="login-main">
@@ -55,6 +66,7 @@ export default function Login() {
           {error && <p id="login-error" className="login-error" role="alert">{error}</p>}
           <button type="submit" className="landing-button login-submit" disabled={loading || submitting}>{submitting ? 'Creating account…' : loading ? 'Signing in…' : registering ? 'Create account' : 'Sign in'}</button>
         </form>
+        {!registering && <button type="button" className="landing-button login-demo-button" onClick={openDemo} disabled={loading || submitting || demoSigningIn}>{demoSigningIn ? 'Opening demo…' : 'Try demo'}</button>}
         <p className="login-access-note">{registering ? 'Already have an account?' : 'New to StockWise?'} <button type="button" disabled={loading || submitting} onClick={() => { setRegistering(value => !value); setError(''); setNotice(''); setPassword(''); setShowPassword(false); setCapsLock(false); }}>{registering ? 'Sign in' : 'Create an account'}</button></p>
         <div className="login-demo-caption"><span className="landing-status-dot" /><p>Portfolio demo with fictional data.<br />Demo changes reset on refresh.</p></div>
       </div></section>
